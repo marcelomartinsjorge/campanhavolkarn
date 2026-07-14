@@ -14,7 +14,7 @@
     position:relative; width:100%; max-width:1400px; margin-top:10px;
   }
   canvas{ width:100%; display:block; background:#111; border-radius:4px; }
-  video#povVideoHit, video#povVideoMiss{
+  video#povVideoHit, video#povVideoMiss, video#povVideoHit2, video#povVideoMiss2{
     position:absolute; top:0; left:0; width:100%; height:100%;
     object-fit:cover; display:none; border-radius:4px; background:#000;
   }
@@ -50,7 +50,6 @@
   }
   #powerBarInner{
     height:100%; width:0%; background:linear-gradient(90deg,#8a3a1e,#d97c2b);
-    transition:width 0.05s linear;
   }
   #msg{
     min-height:22px; font-size:15px; color:#e8d9a8; letter-spacing:0.3px;
@@ -70,6 +69,8 @@
   <canvas id="game" width="1983" height="793"></canvas>
   <video id="povVideoHit" src="hit.mp4" playsinline preload="auto"></video>
   <video id="povVideoMiss" src="miss.mp4" playsinline preload="auto"></video>
+  <video id="povVideoHit2" src="hit2.mp4" playsinline preload="auto"></video>
+  <video id="povVideoMiss2" src="miss2.mp4" playsinline preload="auto"></video>
   <div id="hud"></div>
 </div>
 
@@ -95,6 +96,7 @@
 </div>
 
 <div id="msg">Mire o ângulo, segure o botão pra carregar força, e solte pra disparar.</div>
+<button id="retryBtn" style="display:none; margin-top:8px;">Tentar de novo</button>
 
 <p class="footNote">
   Protótipo v0 — física de arco/vento com valores provisórios pra teste de sensação.
@@ -113,6 +115,8 @@ bg.src = 'cena.png';
 
 const povVideoHit = document.getElementById('povVideoHit');
 const povVideoMiss = document.getElementById('povVideoMiss');
+const povVideoHit2 = document.getElementById('povVideoHit2');
+const povVideoMiss2 = document.getElementById('povVideoMiss2');
 let activePovVideo = null;
 const fireVideo = document.createElement('video');
 fireVideo.src = 'disparo.mp4';
@@ -168,21 +172,59 @@ const archerWalkPool = makeLoopPool('arqueiro_andando.mp4', 425, 0, 452, 706, 13
 const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 100, 1)[0];
 const machineType = makeLoopPool('maquina_idle.mp4',   58,188,1198, 464, 260, 1)[0];
 
+// ---------- Máquina 2 (lança-vigas de Vant-Côvado, Fase 2) ----------
+const machine2Type = makeLoopPool('maquina2_idle.mp4', 40,112,1224,576, 260, 1)[0];
+// altura de referencia igual a da maquina 1 (calibrada pra bater com a tropa);
+// a largura sai da propria proporcao do vídeo dessa máquina.
+const MACHINE2_H = 50;
+const MACHINE2_W = MACHINE2_H * (1224/576);
+
+const fireVideo2 = document.createElement('video');
+fireVideo2.src = 'disparo2.mp4';
+fireVideo2.playsInline = true;
+const keyCanvas2 = document.createElement('canvas');
+keyCanvas2.width = 300; keyCanvas2.height = Math.round(300 * (668/1252));
+const keyCtx2 = keyCanvas2.getContext('2d', { willReadFrequently: true });
+
+// dragao: dormindo fica em loop normal; acordando toca uma vez so, disparado no game over
+const dragonSleepType = makeLoopPool('volkarn_dormindo.mp4', 76,250,1148,359, 340, 1)[0];
+
+function makeOnceType(src, sx, sy, sw, sh, procW){
+  const video = document.createElement('video');
+  video.src = src;
+  video.loop = false;
+  video.muted = true;
+  video.playsInline = true;
+  const procH = Math.round(procW * (sh/sw));
+  const off = document.createElement('canvas');
+  off.width = procW; off.height = procH;
+  const octx = off.getContext('2d', { willReadFrequently: true });
+  return { video, sx, sy, sw, sh, canvas: off, ctx: octx, procW, procH };
+}
+const dragonWakeType = makeOnceType('volkarn_acordando.mp4', 58,270,1200,334, 340);
+const dragonChainedType = makeLoopPool('volkarn_preso.mp4', 244,0,1036,696, 340, 1)[0];
+
+// ancora do dragao: mesmo ponto (centro-x, base-y) para as duas poses,
+// a largura visivel em tela fica constante (450px) e a altura acompanha
+// a proporcao propria de cada video.
+const DRAGON_ANCHOR = { x: 1698, y: 430 };
+const DRAGON_W_ON_SCREEN = 450;
+let dragonAwake = false;
+
 function chromaKeyImageData(d){
   for (let i=0; i<d.length; i+=4){
     const r=d[i], g=d[i+1], b=d[i+2];
     const maxRB = Math.max(r,b);
     const diff = g - maxRB;
     let a;
-    if (diff > 45){ a = 0; }
-    else if (diff > 8){ a = 255 * (1 - (diff-8)/37); }
+    if (diff > 36){ a = 0; }
+    else if (diff > 12){ a = 255 * (1 - (diff-12)/24); }
     else { a = 255; }
     d[i+3] = a;
     // despill: sem isso, pixels de borda semi-transparentes mantem a cor
     // verde original por baixo, e aparecem como uma franja verde na cena.
-    if (a < 255){
-      const capG = maxRB * 1.05;
-      if (g > capG) d[i+1] = capG;
+    if (a < 255 && g > maxRB){
+      d[i+1] = maxRB;
     }
   }
 }
@@ -277,6 +319,12 @@ function updateCrowd(now, dt){
 
 const BRYNE_POS = { x: 780, y: 615, h: 48 };
 const MACHINE_POS = { x: 640, y: 615, h: 50 };
+const MACHINE2_BOX = {
+  x: MACHINE_POS.x - MACHINE2_W/2,
+  y: MACHINE_POS.y - MACHINE2_H,
+  w: MACHINE2_W,
+  h: MACHINE2_H,
+};
 
 // ---------- Estado do jogo ----------
 let state = 'aim';           // aim | charging | firing_inplace | pov | result | gameover | phase_complete
@@ -287,6 +335,13 @@ let chargeStart = 0;
 let wind = 0;                // aceleracao lateral (px/s^2)
 let attempts = 3;
 let lastShotWasHit = false;
+let dragonReactionUntil = 0;
+let phase = 1;
+const PHASE2_TARGET_AREA = { x0: 1520, y0: 290, x1: 1780, y1: 410 };
+function rollPhase2Target(){
+  TARGET_ZONE.x = PHASE2_TARGET_AREA.x0 + Math.random()*(PHASE2_TARGET_AREA.x1-PHASE2_TARGET_AREA.x0);
+  TARGET_ZONE.y = PHASE2_TARGET_AREA.y0 + Math.random()*(PHASE2_TARGET_AREA.y1-PHASE2_TARGET_AREA.y0);
+}
 let msgEl = document.getElementById('msg');
 let angleValEl = document.getElementById('angleVal');
 let windValEl = document.getElementById('windVal');
@@ -350,7 +405,18 @@ function drawWind(){
 
 function drawZzz(){
   if (state === 'gameover') return;
-  const t = performance.now()/600;
+  const now = performance.now();
+  if (now < dragonReactionUntil){
+    ctx.save();
+    ctx.font = 'bold 32px Georgia';
+    ctx.fillStyle = 'rgba(255,210,120,0.95)';
+    ctx.textAlign = 'center';
+    ctx.fillText('?!', DRAGON_HEAD_ZZZ.x + 14, DRAGON_HEAD_ZZZ.y);
+    ctx.textAlign = 'left';
+    ctx.restore();
+    return;
+  }
+  const t = now/600;
   ctx.save();
   ctx.font = 'bold 26px Georgia';
   ctx.fillStyle = 'rgba(230,230,255,0.85)';
@@ -403,12 +469,33 @@ function renderStatic(){
   stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
 
   if (state !== 'firing_inplace'){
-    keyType(machineType);
-    stamp(machineType, MACHINE_POS.x, MACHINE_POS.y, MACHINE_POS.h, true);
+    if (phase === 1){
+      keyType(machineType);
+      stamp(machineType, MACHINE_POS.x, MACHINE_POS.y, MACHINE_POS.h, true);
+    } else {
+      keyType(machine2Type);
+      stamp(machine2Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE2_H, true);
+    }
+  }
+
+  if (phase === 1){
+    if (dragonAwake){
+      keyType(dragonWakeType);
+      const th = DRAGON_W_ON_SCREEN * (dragonWakeType.procH / dragonWakeType.procW);
+      stamp(dragonWakeType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
+    } else {
+      keyType(dragonSleepType);
+      const th = DRAGON_W_ON_SCREEN * (dragonSleepType.procH / dragonSleepType.procW);
+      stamp(dragonSleepType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
+    }
+  } else {
+    keyType(dragonChainedType);
+    const th = DRAGON_W_ON_SCREEN * (dragonChainedType.procH / dragonChainedType.procW);
+    stamp(dragonChainedType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
   }
 
   drawTargetZone();
-  drawZzz();
+  if (phase === 1){ drawZzz(); }
   drawWind();
   if (state==='aim' || state==='charging'){
     drawTrajectoryPreview();
@@ -421,6 +508,7 @@ function loop(){
   const dt = Math.min(0.1, (now - __lastFrameT)/1000);
   __lastFrameT = now;
   updateCrowd(now, dt);
+  updateCharge();
 
   if (state==='aim' || state==='charging' || state==='result' || state==='gameover' || state==='phase_complete'){
     renderStatic();
@@ -441,20 +529,38 @@ function chromaKeyFrameToCanvas(){
   keyCtx.putImageData(frame,0,0);
 }
 
+function chromaKeyFrameToCanvas2(){
+  keyCtx2.drawImage(fireVideo2, 0, 36, 1252, 668, 0, 0, keyCanvas2.width, keyCanvas2.height);
+  const frame = keyCtx2.getImageData(0,0,keyCanvas2.width,keyCanvas2.height);
+  chromaKeyImageData(frame.data);
+  keyCtx2.putImageData(frame,0,0);
+}
+
 function drawFiringOverlay(){
-  if (fireVideo.readyState >= 2){
-    chromaKeyFrameToCanvas();
-    // agora que o recorte ja bate com a proporcao real da maquina (1198x464),
-    // desenha direto na mesma caixa da maquina parada, sem padding extra.
-    const dx = MACHINE_BOX.x, dy = MACHINE_BOX.y;
-    const dw = MACHINE_BOX.w, dh = MACHINE_BOX.h;
-    // o video foi gravado apontando para a esquerda; espelha horizontalmente
-    // para bater com a maquina (ja virada para a direita) na cena parada.
-    ctx.save();
-    ctx.translate(dx + dw, dy);
-    ctx.scale(-1, 1);
-    ctx.drawImage(keyCanvas, 0, 0, dw, dh);
-    ctx.restore();
+  if (phase === 1){
+    if (fireVideo.readyState >= 2){
+      chromaKeyFrameToCanvas();
+      const dx = MACHINE_BOX.x, dy = MACHINE_BOX.y;
+      const dw = MACHINE_BOX.w, dh = MACHINE_BOX.h;
+      ctx.save();
+      ctx.translate(dx + dw, dy);
+      ctx.scale(-1, 1);
+      ctx.drawImage(keyCanvas, 0, 0, dw, dh);
+      ctx.restore();
+    }
+  } else {
+    if (fireVideo2.readyState >= 2){
+      chromaKeyFrameToCanvas2();
+      const dx = MACHINE2_BOX.x, dy = MACHINE2_BOX.y;
+      const dw = MACHINE2_BOX.w, dh = MACHINE2_BOX.h;
+      // mesma logica de espelhamento da maquina 1: video gravado apontando
+      // para a esquerda, espelha pra bater com a cena (virada pra direita).
+      ctx.save();
+      ctx.translate(dx + dw, dy);
+      ctx.scale(-1, 1);
+      ctx.drawImage(keyCanvas2, 0, 0, dw, dh);
+      ctx.restore();
+    }
   }
 }
 
@@ -469,6 +575,36 @@ function startAimState(){
   setMsg('Mire o ângulo, segure o botão pra carregar força, e solte pra disparar. Tentativas restantes: ' + attempts);
 }
 
+function startPhase2(){
+  phase = 2;
+  attempts = 3; // presumindo o mesmo numero de tentativas da fase 1 -- ajustavel
+  attemptsValEl.textContent = attempts;
+  TARGET_ZONE.r = 38; // alvo menor -- mais dificil de acertar
+  rollPhase2Target();
+  startAimState();
+  setMsg('FASE 2 — Ataque nas fendas entre as escamas. O alvo muda de lugar a cada tentativa. Tentativas: ' + attempts);
+}
+
+function triggerGameOver(){
+  state = 'gameover';
+  dragonAwake = true;
+  dragonWakeType.video.currentTime = 0;
+  dragonWakeType.video.play().catch(()=>{});
+  setMsg('ERROU as 3 tentativas — o Volkarn acorda. GAME OVER.');
+  document.getElementById('retryBtn').style.display = 'inline-block';
+}
+
+function restartGame(){
+  attempts = 3;
+  attemptsValEl.textContent = attempts;
+  dragonAwake = false;
+  dragonWakeType.video.pause();
+  dragonWakeType.video.currentTime = 0;
+  document.getElementById('retryBtn').style.display = 'none';
+  startAimState();
+}
+document.getElementById('retryBtn').addEventListener('click', restartGame);
+
 let audioUnlocked = false;
 function unlockAudioOnce(){
   if (audioUnlocked) return;
@@ -476,7 +612,7 @@ function unlockAudioOnce(){
   // toca um instante de cada video real (ja com src carregado) dentro do
   // gesto direto do usuario, pra o play() assincrono mais tarde (depois do
   // video de disparo) nao ser bloqueado pela politica de autoplay-com-som.
-  [povVideoHit, povVideoMiss].forEach(v => {
+  [povVideoHit, povVideoMiss, povVideoHit2, povVideoMiss2].forEach(v => {
     v.play().then(() => { v.pause(); v.currentTime = 0; }).catch(() => {});
   });
 }
@@ -514,18 +650,22 @@ function fireShot(){
   lastShotWasHit = hit;
   state = 'firing_inplace';
   setMsg('Disparando...');
-  fireVideo.currentTime = 0;
-  fireVideo.play();
-  pollVideoEnd(fireVideo, onFiringAnimDone);
+  const activeFireVideo = phase === 1 ? fireVideo : fireVideo2;
+  activeFireVideo.currentTime = 0;
+  activeFireVideo.play();
+  pollVideoEnd(activeFireVideo, onFiringAnimDone);
 }
 
 function onFiringAnimDone(){
   state = 'pov';
-  activePovVideo = lastShotWasHit ? povVideoHit : povVideoMiss;
+  const hitVideo = phase === 1 ? povVideoHit : povVideoHit2;
+  const missVideo = phase === 1 ? povVideoMiss : povVideoMiss2;
+  activePovVideo = lastShotWasHit ? hitVideo : missVideo;
   activePovVideo.style.display = 'block';
   activePovVideo.currentTime = 0;
   activePovVideo.play().catch(err => console.warn('POV play falhou:', err));
-  setMsg(lastShotWasHit ? 'O arpão voa em direção ao alvo...' : 'O arpão voa... será que vai prender?');
+  const proj = phase === 1 ? 'arpão' : 'viga';
+  setMsg(lastShotWasHit ? `A ${proj} voa em direção ao alvo...` : `A ${proj} voa... será que vai acertar?`);
   pollVideoEnd(activePovVideo, onPovDone);
 }
 
@@ -536,17 +676,32 @@ function onPovDone(){
 
   if (lastShotWasHit){
     state = 'phase_complete';
-    setMsg('ACERTOU! A corrente prendeu firme no Volkarn. FASE 1 COMPLETA.');
+    if (phase === 1){
+      setMsg('ACERTOU! A corrente prendeu firme no Volkarn. Preparando Fase 2...');
+      setTimeout(startPhase2, 1800);
+    } else {
+      setMsg('ACERTOU! FASE 2 COMPLETA. (Fase 3 ainda não implementada nesse teste.)');
+    }
     return;
   }
 
   attempts -= 1;
   attemptsValEl.textContent = attempts;
+  if (phase === 1){
+    dragonReactionUntil = performance.now() + 1400; // "?!" por 1.4s antes de voltar ao zzz
+  }
   if (attempts <= 0){
-    state = 'gameover';
-    setMsg('ERROU as 3 tentativas — o Volkarn acorda. GAME OVER.');
+    if (phase === 1){
+      triggerGameOver();
+    } else {
+      // suposicao: na fase 2 esgotar tentativas so reinicia a fase (sem game over
+      // permanente) -- me avisa se voce quiser uma consequencia diferente aqui.
+      setMsg('Errou as 3 tentativas da Fase 2. Recomeçando a fase...');
+      setTimeout(startPhase2, 1600);
+    }
     return;
   }
+  if (phase === 2){ rollPhase2Target(); }
   setMsg('Errou. Restam ' + attempts + ' tentativa(s). Ajuste ângulo/força e tente de novo.');
   setTimeout(startAimState, 900);
 }
@@ -581,7 +736,8 @@ fireBtn.addEventListener('touchstart', (e)=>{ e.preventDefault(); beginCharge();
 window.addEventListener('mouseup', releaseCharge);
 window.addEventListener('touchend', releaseCharge);
 
-setInterval(updateCharge, 16);
+// updateCharge agora roda dentro do loop() principal (mesmo relogio do rAF),
+// evitando o "gaguejo" de ter dois timers independentes atualizando a barra.
 
 // ---------- Start ----------
 bg.onload = () => {
