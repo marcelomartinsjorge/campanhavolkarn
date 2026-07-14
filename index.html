@@ -132,30 +132,40 @@ const GROUND_Y       = 630;
 const DRAGON_HEAD_ZZZ = { x: 1530, y: 300 };
 
 // ---------- Sistema de "tipos" animados (video idle em loop + chroma key ao vivo) ----------
-// Cada tipo tem UM video compartilhado (nao um por instancia) -- processamos o
-// frame do video uma vez por tipo a cada frame de render, e "carimbamos" esse
-// mesmo frame ja recortado em varias posicoes na cena. Isso mantem leve mesmo
-// com 20+ bonecos na tela ao mesmo tempo.
-function makeLoopType(src, sx, sy, sw, sh, procW){
-  const video = document.createElement('video');
-  video.src = src;
-  video.loop = true;
-  video.muted = true;
-  video.playsInline = true;
-  video.autoplay = true;
-  video.play().catch(()=>{});
-  const procH = Math.round(procW * (sh/sw));
-  const off = document.createElement('canvas');
-  off.width = procW; off.height = procH;
-  const octx = off.getContext('2d', { willReadFrequently: true });
-  return { video, sx, sy, sw, sh, canvas: off, ctx: octx, procW, procH };
-}
+// Cada tipo com varias instancias (tropa) usa um POOL de copias do mesmo video,
+// cada uma comecando em um ponto diferente do loop -- assim os bonecos nao
+// respiram/balancam todos em sincronia perfeita. Bryne e a maquina, que so
+// tem 1 instancia cada, usam um pool de tamanho 1 (sem necessidade de variar).
 
 // retangulos de origem (sx,sy,sw,sh) medidos no frame 1280x720 de cada video
-const soldierType = makeLoopType('soldado_idle.mp4',  422, 32, 328, 680, 90);
-const archerType  = makeLoopType('arqueiro_idle.mp4', 430, 32, 452, 676, 110);
-const bryneType   = makeLoopType('bryne_idle.mp4',    504, 32, 282, 676, 80);
-const machineType = makeLoopType('maquina_idle.mp4',   58,188,1198, 464, 220);
+function makeLoopPool(src, sx, sy, sw, sh, procW, poolSize){
+  const items = [];
+  for (let i=0; i<poolSize; i++){
+    const video = document.createElement('video');
+    video.src = src;
+    video.loop = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.play().catch(()=>{});
+    // cada copia comeca num ponto diferente do loop, pra nao sincronizar
+    video.addEventListener('loadedmetadata', () => {
+      try { video.currentTime = (video.duration || 4) * (i / poolSize); } catch(e){}
+    }, { once: true });
+    const procH = Math.round(procW * (sh/sw));
+    const off = document.createElement('canvas');
+    off.width = procW; off.height = procH;
+    const octx = off.getContext('2d', { willReadFrequently: true });
+    items.push({ video, sx, sy, sw, sh, canvas: off, ctx: octx, procW, procH });
+  }
+  return items;
+}
+
+const soldierPool = makeLoopPool('soldado_idle.mp4',  422, 32, 328, 680, 90, 5);
+const soldierWalkPool = makeLoopPool('soldado_andando.mp4', 403, 32, 418, 688, 90, 3);
+const archerPool  = makeLoopPool('arqueiro_idle.mp4', 430, 32, 452, 676, 110, 4);
+const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 80, 1)[0];
+const machineType = makeLoopPool('maquina_idle.mp4',   58,188,1198, 464, 220, 1)[0];
 
 function keyType(t){
   if (t.video.readyState < 2) return false;
@@ -188,9 +198,11 @@ function stamp(t, x, y, targetH, flip){
 }
 
 // ---------- Formação do exército (compacta, numa faixa de chão seguramente plana) ----------
+const CROWD_X_MIN = 150, CROWD_X_MAX = 430;
+const WALK_SPEED = 22; // px/s -- passo bem lento, so pra dar vida
 const crowd = [];
 (function buildCrowd(){
-  const zone_x0 = 150, zone_x1 = 430, baseY = 615;
+  const zone_x0 = CROWD_X_MIN, zone_x1 = CROWD_X_MAX, baseY = 615;
   const rows = [
     { dy: 0,   scale: 1.00, n: 8 },
     { dy: -24, scale: 0.93, n: 7 },
@@ -208,10 +220,46 @@ const crowd = [];
       const h = baseH * row.scale * (0.94 + rnd()*0.12);
       const flip = rnd() < 0.5;
       const isArcher = rnd() < 0.4;
-      crowd.push({ type: isArcher ? archerType : soldierType, x, y, h, flip });
+      const idlePool = isArcher ? archerPool : soldierPool;
+      const chosen = idlePool[Math.floor(rnd()*idlePool.length)];
+      crowd.push({
+        isArcher, x, y, h, flip,
+        idlePool,
+        walkPool: isArcher ? null : soldierWalkPool,  // arqueiro nao tem video de andar ainda
+        currentItem: chosen,
+        walking: false,
+        dir: 0,
+        nextChange: performance.now() + rnd()*4000,   // espalha o inicio de cada um
+      });
     }
   });
 })();
+
+function updateCrowd(now, dt){
+  for (const u of crowd){
+    if (!u.walkPool) continue; // arqueiros ficam so no idle por enquanto
+    if (now >= u.nextChange){
+      if (u.walking){
+        u.walking = false;
+        u.currentItem = u.idlePool[Math.floor(Math.random()*u.idlePool.length)];
+        u.nextChange = now + 1500 + Math.random()*4000;
+      } else {
+        u.walking = true;
+        u.dir = Math.random() < 0.5 ? -1 : 1;
+        u.flip = u.dir === 1; // suposicao: video "cru" anda para a esquerda; ajustar se sair invertido
+        u.currentItem = u.walkPool[Math.floor(Math.random()*u.walkPool.length)];
+        u.nextChange = now + 900 + Math.random()*1300;
+      }
+    }
+    if (u.walking){
+      u.x += u.dir * WALK_SPEED * dt;
+      if (u.x < CROWD_X_MIN - 25 || u.x > CROWD_X_MAX + 25){
+        u.dir *= -1;
+        u.flip = u.dir === 1;
+      }
+    }
+  }
+}
 
 const BRYNE_POS = { x: 780, y: 615, h: 48 };
 const MACHINE_POS = { x: 640, y: 615, h: 50 };
@@ -332,8 +380,11 @@ function renderStatic(){
   ctx.clearRect(0,0,W,H);
   ctx.drawImage(bg,0,0,W,H);
 
-  keyType(soldierType); keyType(archerType); keyType(bryneType);
-  for (const u of crowd){ stamp(u.type, u.x, u.y, u.h, u.flip); }
+  soldierPool.forEach(keyType);
+  soldierWalkPool.forEach(keyType);
+  archerPool.forEach(keyType);
+  keyType(bryneType);
+  for (const u of crowd){ stamp(u.currentItem, u.x, u.y, u.h, u.flip); }
   stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
 
   if (state !== 'firing_inplace'){
@@ -349,7 +400,13 @@ function renderStatic(){
   }
 }
 
+let __lastFrameT = performance.now();
 function loop(){
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - __lastFrameT)/1000);
+  __lastFrameT = now;
+  updateCrowd(now, dt);
+
   if (state==='aim' || state==='charging' || state==='result' || state==='gameover' || state==='phase_complete'){
     renderStatic();
   } else if (state==='firing_inplace'){
