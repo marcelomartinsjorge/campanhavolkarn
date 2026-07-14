@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>As Quatro Vontades — Fase 1: Prender Volkarn</title>
+<style>
+  html,body{
+    margin:0; padding:0; background:#0a0a0c; color:#eee;
+    font-family: Georgia, 'Times New Roman', serif;
+    display:flex; flex-direction:column; align-items:center;
+    min-height:100vh;
+  }
+  #wrap{
+    position:relative; width:100%; max-width:1400px; margin-top:10px;
+  }
+  canvas{ width:100%; display:block; background:#111; border-radius:4px; }
+  video#povVideo{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    object-fit:cover; display:none; border-radius:4px; background:#000;
+  }
+  #hud{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    pointer-events:none;
+  }
+  #topbar{
+    display:flex; justify-content:space-between; width:100%;
+    max-width:1400px; padding:6px 4px; box-sizing:border-box;
+    font-size:14px; letter-spacing:0.5px; color:#cfcfcf;
+  }
+  #controls{
+    width:100%; max-width:1400px; display:flex; align-items:center;
+    gap:18px; padding:10px 6px; box-sizing:border-box; flex-wrap:wrap;
+  }
+  .ctrlGroup{ display:flex; align-items:center; gap:8px; }
+  button{
+    background:#2a2620; color:#e8e0cf; border:1px solid #6b5f45;
+    padding:8px 14px; border-radius:3px; cursor:pointer; font-size:14px;
+    font-family: Georgia, serif;
+  }
+  button:hover{ background:#3a3428; }
+  button:active{ background:#4a4232; }
+  #fireBtn{
+    background:#4a1f1f; border-color:#7a3b3b; font-weight:bold;
+    min-width:220px; text-align:center; user-select:none;
+  }
+  #fireBtn.charging{ background:#6a2a2a; }
+  #powerBarOuter{
+    width:220px; height:14px; background:#1a1a1a; border:1px solid #555;
+    border-radius:3px; overflow:hidden;
+  }
+  #powerBarInner{
+    height:100%; width:0%; background:linear-gradient(90deg,#8a3a1e,#d97c2b);
+    transition:width 0.05s linear;
+  }
+  #msg{
+    min-height:22px; font-size:15px; color:#e8d9a8; letter-spacing:0.3px;
+  }
+  #angleVal, #windVal, #attemptsVal{ font-weight:bold; color:#e8d9a8; }
+  .footNote{ font-size:11px; color:#777; max-width:1400px; padding:0 6px 14px; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div>AS QUATRO VONTADES — <em>A Queda das Raízes</em></div>
+  <div>Fase 1 · Prender Volkarn — teste jogável v0</div>
+</div>
+
+<div id="wrap">
+  <canvas id="game" width="1983" height="793"></canvas>
+  <video id="povVideo" muted playsinline></video>
+  <div id="hud"></div>
+</div>
+
+<div id="controls">
+  <div class="ctrlGroup">
+    <button id="angleDown">▼ Ângulo</button>
+    <span>Ângulo: <span id="angleVal">45</span>°</span>
+    <button id="angleUp">▲ Ângulo</button>
+  </div>
+
+  <div class="ctrlGroup">
+    <button id="fireBtn">SEGURE PARA CARREGAR FORÇA</button>
+    <div id="powerBarOuter"><div id="powerBarInner"></div></div>
+  </div>
+
+  <div class="ctrlGroup">
+    <span>Vento: <span id="windVal">--</span></span>
+  </div>
+
+  <div class="ctrlGroup">
+    <span>Tentativas: <span id="attemptsVal">3</span>/3</span>
+  </div>
+</div>
+
+<div id="msg">Mire o ângulo, segure o botão pra carregar força, e solte pra disparar.</div>
+
+<p class="footNote">
+  Protótipo v0 — física de arco/vento com valores provisórios pra teste de sensação.
+  Alvo: âncora no pescoço/ombro do Volkarn. 3 tentativas — errando as 3, ele acorda (game over).
+  Sirva este arquivo por um servidor local (não abra como file:// direto) pra evitar bloqueio de leitura de vídeo pelo navegador.
+</p>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// ---------- Assets ----------
+const bg = new Image();
+bg.src = 'cena.png';
+
+const povVideo = document.getElementById('povVideo');
+const fireVideo = document.createElement('video');
+fireVideo.src = 'disparo.mp4';
+fireVideo.muted = true;
+fireVideo.playsInline = true;
+
+// offscreen canvas p/ chroma key em tempo real do video de disparo
+const keyCanvas = document.createElement('canvas');
+keyCanvas.width = 320; keyCanvas.height = 180;
+const keyCtx = keyCanvas.getContext('2d', { willReadFrequently: true });
+
+// ---------- Posições calibradas na cena (cena.png é 1983x793) ----------
+const MACHINE_BOX   = { x:752, y:547, w:176, h:68 };   // maquina "ativa" (a mais a frente, perto do Bryne)
+const MUZZLE        = { x: 915, y: 560 };              // ponta do lancador, apos o flip
+const TARGET_ZONE    = { x: 1650, y: 345, r: 55 };      // ancora no pescoco/ombro do Volkarn
+const GROUND_Y       = 630;
+const DRAGON_HEAD_ZZZ = { x: 1530, y: 300 };
+
+// ---------- Estado do jogo ----------
+let state = 'aim';           // aim | charging | firing_inplace | pov | result | gameover | phase_complete
+let angleDeg = 45;
+let power = 0;               // 0..1
+let charging = false;
+let chargeStart = 0;
+let wind = 0;                // aceleracao lateral (px/s^2)
+let attempts = 3;
+let lastShotWasHit = false;
+let msgEl = document.getElementById('msg');
+let angleValEl = document.getElementById('angleVal');
+let windValEl = document.getElementById('windVal');
+let attemptsValEl = document.getElementById('attemptsVal');
+let powerBarInner = document.getElementById('powerBarInner');
+let fireBtn = document.getElementById('fireBtn');
+
+const GRAVITY = 900;      // px/s^2
+const V_MIN = 550, V_MAX = 1500;
+
+function rollWind(){
+  wind = (Math.random()*2 - 1) * 260; // -260..260
+  windValEl.textContent = (wind>0? '→ ':'← ') + Math.abs(wind).toFixed(0);
+}
+rollWind();
+
+function setMsg(t){ msgEl.textContent = t; }
+
+// ---------- Fisica da trajetoria ----------
+function simulateTrajectory(vel, angleRad, windAccel){
+  const pts = [];
+  const vx0 = vel*Math.cos(angleRad);
+  const vy0 = -vel*Math.sin(angleRad);
+  let t = 0, dt = 0.012;
+  let hit = false;
+  while (t < 4){
+    const x = MUZZLE.x + vx0*t + 0.5*windAccel*t*t;
+    const y = MUZZLE.y + vy0*t + 0.5*GRAVITY*t*t;
+    pts.push({x,y});
+    const dx = x - TARGET_ZONE.x, dy = y - TARGET_ZONE.y;
+    if (Math.sqrt(dx*dx+dy*dy) <= TARGET_ZONE.r){ hit = true; break; }
+    if (y > GROUND_Y || x > W+40 || x < -40) break;
+    t += dt;
+  }
+  return {pts, hit};
+}
+
+// ---------- Loop de desenho ----------
+function drawWind(){
+  ctx.save();
+  ctx.translate(70, 60);
+  ctx.strokeStyle = '#cfd8dc';
+  ctx.fillStyle = '#cfd8dc';
+  ctx.lineWidth = 3;
+  const len = 40;
+  const dir = wind >= 0 ? 1 : -1;
+  ctx.beginPath();
+  ctx.moveTo(-len*dir, 0);
+  ctx.lineTo(len*dir, 0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(len*dir, 0);
+  ctx.lineTo(len*dir - 12*dir, -8);
+  ctx.lineTo(len*dir - 12*dir, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.font = '16px Georgia';
+  ctx.fillText('vento: ' + Math.abs(wind).toFixed(0), -35, 28);
+  ctx.restore();
+}
+
+function drawZzz(){
+  if (state === 'gameover') return;
+  const t = performance.now()/600;
+  ctx.save();
+  ctx.font = 'bold 26px Georgia';
+  ctx.fillStyle = 'rgba(230,230,255,0.85)';
+  for (let i=0;i<3;i++){
+    const phase = (t + i*0.9) % 3;
+    const yOff = -phase*18;
+    const alpha = Math.max(0, 1 - phase/3);
+    ctx.globalAlpha = alpha;
+    ctx.fillText('Z', DRAGON_HEAD_ZZZ.x + i*14, DRAGON_HEAD_ZZZ.y + yOff);
+  }
+  ctx.restore();
+}
+
+function drawTrajectoryPreview(){
+  const vel = V_MIN + power*(V_MAX-V_MIN);
+  const rad = angleDeg * Math.PI/180;
+  const {pts} = simulateTrajectory(vel, rad, wind);
+  ctx.save();
+  ctx.fillStyle = '#ffd27a';
+  for (let i=0;i<pts.length;i+=4){
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    ctx.arc(pts[i].x, pts[i].y, 2.4, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawTargetZone(){
+  ctx.save();
+  ctx.strokeStyle = state==='phase_complete' ? '#7CFC00' : 'rgba(255,80,60,0.75)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5,5]);
+  ctx.beginPath();
+  ctx.arc(TARGET_ZONE.x, TARGET_ZONE.y, TARGET_ZONE.r, 0, Math.PI*2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawChains(hitPoints){
+  ctx.save();
+  ctx.strokeStyle = '#5a5248';
+  ctx.lineWidth = 4;
+  for (const p of hitPoints){
+    ctx.beginPath();
+    ctx.moveTo(MUZZLE.x, MUZZLE.y);
+    // curva simples pra parecer corrente frouxa presa
+    const midX = (MUZZLE.x + p.x)/2, midY = Math.max(MUZZLE.y,p.y) + 40;
+    ctx.quadraticCurveTo(midX, midY, p.x, p.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+let chainedPoints = [];
+
+function renderStatic(){
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(bg,0,0,W,H);
+  drawChains(chainedPoints);
+  drawTargetZone();
+  drawZzz();
+  drawWind();
+  if (state==='aim' || state==='charging'){
+    drawTrajectoryPreview();
+  }
+}
+
+function loop(){
+  if (state==='aim' || state==='charging' || state==='result' || state==='gameover' || state==='phase_complete'){
+    renderStatic();
+  } else if (state==='firing_inplace'){
+    renderStatic();
+    drawFiringOverlay();
+  }
+  requestAnimationFrame(loop);
+}
+
+// ---------- Overlay do video de disparo (com chroma key em tempo real) ----------
+function chromaKeyFrameToCanvas(){
+  keyCtx.drawImage(fireVideo, 0, 0, keyCanvas.width, keyCanvas.height);
+  const frame = keyCtx.getImageData(0,0,keyCanvas.width,keyCanvas.height);
+  const d = frame.data;
+  for (let i=0; i<d.length; i+=4){
+    const r=d[i], g=d[i+1], b=d[i+2];
+    const diff = g - Math.max(r,b);
+    if (diff > 45){ d[i+3] = 0; }
+    else if (diff > 10){ d[i+3] = 255 * (1 - (diff-10)/35); }
+  }
+  keyCtx.putImageData(frame,0,0);
+}
+
+function drawFiringOverlay(){
+  if (fireVideo.readyState >= 2){
+    chromaKeyFrameToCanvas();
+    ctx.drawImage(keyCanvas, MACHINE_BOX.x - 30, MACHINE_BOX.y - 40, MACHINE_BOX.w + 60, MACHINE_BOX.h + 60);
+  }
+}
+
+// ---------- Maquina de estados ----------
+function startAimState(){
+  state = 'aim';
+  power = 0;
+  powerBarInner.style.width = '0%';
+  fireBtn.classList.remove('charging');
+  fireBtn.textContent = 'SEGURE PARA CARREGAR FORÇA';
+  rollWind();
+  setMsg('Mire o ângulo, segure o botão pra carregar força, e solte pra disparar. Tentativas restantes: ' + attempts);
+}
+
+function beginCharge(){
+  if (state !== 'aim') return;
+  state = 'charging';
+  charging = true;
+  chargeStart = performance.now();
+  fireBtn.classList.add('charging');
+  fireBtn.textContent = 'CARREGANDO...';
+}
+
+function updateCharge(){
+  if (!charging) return;
+  const elapsed = (performance.now() - chargeStart)/1000;
+  power = Math.min(1, elapsed/1.6); // 1.6s pra carga maxima
+  powerBarInner.style.width = (power*100).toFixed(0) + '%';
+  if (power >= 1){ releaseCharge(); }
+}
+
+function releaseCharge(){
+  if (state !== 'charging') return;
+  charging = false;
+  fireBtn.classList.remove('charging');
+  fireBtn.textContent = 'SEGURE PARA CARREGAR FORÇA';
+  fireShot();
+}
+
+function fireShot(){
+  const vel = V_MIN + power*(V_MAX-V_MIN);
+  const rad = angleDeg * Math.PI/180;
+  const {hit} = simulateTrajectory(vel, rad, wind);
+  lastShotWasHit = hit;
+  state = 'firing_inplace';
+  setMsg('Disparando...');
+  fireVideo.currentTime = 0;
+  fireVideo.play();
+  pollVideoEnd(fireVideo, onFiringAnimDone);
+}
+
+function onFiringAnimDone(){
+  state = 'pov';
+  const src = lastShotWasHit ? 'hit.mp4' : 'miss.mp4';
+  povVideo.src = src;
+  povVideo.style.display = 'block';
+  povVideo.currentTime = 0;
+  povVideo.play();
+  setMsg(lastShotWasHit ? 'O arpão voa em direção ao alvo...' : 'O arpão voa... será que vai prender?');
+  pollVideoEnd(povVideo, onPovDone);
+}
+
+function onPovDone(){
+  povVideo.pause();
+  povVideo.style.display = 'none';
+  state = 'result';
+
+  if (lastShotWasHit){
+    chainedPoints.push({x:TARGET_ZONE.x, y:TARGET_ZONE.y});
+    state = 'phase_complete';
+    setMsg('ACERTOU! A corrente prendeu firme no Volkarn. FASE 1 COMPLETA.');
+    return;
+  }
+
+  attempts -= 1;
+  attemptsValEl.textContent = attempts;
+  if (attempts <= 0){
+    state = 'gameover';
+    setMsg('ERROU as 3 tentativas — o Volkarn acorda. GAME OVER.');
+    return;
+  }
+  setMsg('Errou. Restam ' + attempts + ' tentativa(s). Ajuste ângulo/força e tente de novo.');
+  setTimeout(startAimState, 900);
+}
+
+// poll em vez de 'ended' (evita bug de eventos que nao disparam em alguns formatos)
+function pollVideoEnd(videoEl, cb){
+  const check = () => {
+    if (videoEl.paused) { return; }
+    if (videoEl.currentTime >= videoEl.duration - 0.08){
+      cb();
+      return;
+    }
+    requestAnimationFrame(check);
+  };
+  requestAnimationFrame(check);
+}
+
+// ---------- Inputs ----------
+document.getElementById('angleUp').addEventListener('click', () => {
+  if (state !== 'aim') return;
+  angleDeg = Math.min(75, angleDeg + 1);
+  angleValEl.textContent = angleDeg;
+});
+document.getElementById('angleDown').addEventListener('click', () => {
+  if (state !== 'aim') return;
+  angleDeg = Math.max(15, angleDeg - 1);
+  angleValEl.textContent = angleDeg;
+});
+
+fireBtn.addEventListener('mousedown', beginCharge);
+fireBtn.addEventListener('touchstart', (e)=>{ e.preventDefault(); beginCharge(); });
+window.addEventListener('mouseup', releaseCharge);
+window.addEventListener('touchend', releaseCharge);
+
+setInterval(updateCharge, 16);
+
+// ---------- Start ----------
+bg.onload = () => {
+  startAimState();
+  loop();
+};
+</script>
+</body>
+</html>
