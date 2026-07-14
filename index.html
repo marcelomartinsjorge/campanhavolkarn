@@ -120,7 +120,7 @@ fireVideo.playsInline = true;
 
 // offscreen canvas p/ chroma key em tempo real do video de disparo
 const keyCanvas = document.createElement('canvas');
-keyCanvas.width = 320; keyCanvas.height = 180;
+keyCanvas.width = 320; keyCanvas.height = 124; // proporcao 1198x464 da regiao da maquina
 const keyCtx = keyCanvas.getContext('2d', { willReadFrequently: true });
 
 // ---------- Posições calibradas na cena (cena.png é 1983x793) ----------
@@ -161,24 +161,37 @@ function makeLoopPool(src, sx, sy, sw, sh, procW, poolSize){
   return items;
 }
 
-const soldierPool = makeLoopPool('soldado_idle.mp4',  422, 32, 328, 680, 90, 5);
-const soldierWalkPool = makeLoopPool('soldado_andando.mp4', 403, 32, 418, 688, 90, 3);
-const archerPool  = makeLoopPool('arqueiro_idle.mp4', 430, 32, 452, 676, 110, 4);
-const archerWalkPool = makeLoopPool('arqueiro_andando.mp4', 425, 0, 452, 706, 110, 3);
-const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 80, 1)[0];
-const machineType = makeLoopPool('maquina_idle.mp4',   58,188,1198, 464, 220, 1)[0];
+const soldierPool = makeLoopPool('soldado_idle.mp4',  422, 32, 328, 680, 115, 5);
+const soldierWalkPool = makeLoopPool('soldado_andando.mp4', 403, 32, 418, 688, 115, 3);
+const archerPool  = makeLoopPool('arqueiro_idle.mp4', 430, 32, 452, 676, 135, 4);
+const archerWalkPool = makeLoopPool('arqueiro_andando.mp4', 425, 0, 452, 706, 135, 3);
+const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 100, 1)[0];
+const machineType = makeLoopPool('maquina_idle.mp4',   58,188,1198, 464, 260, 1)[0];
+
+function chromaKeyImageData(d){
+  for (let i=0; i<d.length; i+=4){
+    const r=d[i], g=d[i+1], b=d[i+2];
+    const maxRB = Math.max(r,b);
+    const diff = g - maxRB;
+    let a;
+    if (diff > 45){ a = 0; }
+    else if (diff > 8){ a = 255 * (1 - (diff-8)/37); }
+    else { a = 255; }
+    d[i+3] = a;
+    // despill: sem isso, pixels de borda semi-transparentes mantem a cor
+    // verde original por baixo, e aparecem como uma franja verde na cena.
+    if (a < 255){
+      const capG = maxRB * 1.05;
+      if (g > capG) d[i+1] = capG;
+    }
+  }
+}
 
 function keyType(t){
   if (t.video.readyState < 2) return false;
   t.ctx.drawImage(t.video, t.sx, t.sy, t.sw, t.sh, 0, 0, t.procW, t.procH);
   const frame = t.ctx.getImageData(0,0,t.procW,t.procH);
-  const d = frame.data;
-  for (let i=0; i<d.length; i+=4){
-    const r=d[i], g=d[i+1], b=d[i+2];
-    const diff = g - Math.max(r,b);
-    if (diff > 45){ d[i+3] = 0; }
-    else if (diff > 10){ d[i+3] = 255 * (1 - (diff-10)/35); }
-  }
+  chromaKeyImageData(frame.data);
   t.ctx.putImageData(frame,0,0);
   return true;
 }
@@ -247,7 +260,7 @@ function updateCrowd(now, dt){
       } else {
         u.walking = true;
         u.dir = Math.random() < 0.5 ? -1 : 1;
-        u.flip = u.dir === 1; // suposicao: video "cru" anda para a esquerda; ajustar se sair invertido
+        u.flip = u.dir === -1; // corrigido: estava invertido (moonwalk)
         u.currentItem = u.walkPool[Math.floor(Math.random()*u.walkPool.length)];
         u.nextChange = now + 900 + Math.random()*1300;
       }
@@ -256,7 +269,7 @@ function updateCrowd(now, dt){
       u.x += u.dir * WALK_SPEED * dt;
       if (u.x < CROWD_X_MIN - 25 || u.x > CROWD_X_MAX + 25){
         u.dir *= -1;
-        u.flip = u.dir === 1;
+        u.flip = u.dir === -1;
       }
     }
   }
@@ -420,23 +433,21 @@ function loop(){
 
 // ---------- Overlay do video de disparo (com chroma key em tempo real) ----------
 function chromaKeyFrameToCanvas(){
-  keyCtx.drawImage(fireVideo, 0, 0, keyCanvas.width, keyCanvas.height);
+  // recorta so a regiao da maquina no frame original (mesma area medida no idle),
+  // em vez do frame 1280x720 inteiro -- melhora a nitidez do recorte no mesmo espaco
+  keyCtx.drawImage(fireVideo, 58, 188, 1198, 464, 0, 0, keyCanvas.width, keyCanvas.height);
   const frame = keyCtx.getImageData(0,0,keyCanvas.width,keyCanvas.height);
-  const d = frame.data;
-  for (let i=0; i<d.length; i+=4){
-    const r=d[i], g=d[i+1], b=d[i+2];
-    const diff = g - Math.max(r,b);
-    if (diff > 45){ d[i+3] = 0; }
-    else if (diff > 10){ d[i+3] = 255 * (1 - (diff-10)/35); }
-  }
+  chromaKeyImageData(frame.data);
   keyCtx.putImageData(frame,0,0);
 }
 
 function drawFiringOverlay(){
   if (fireVideo.readyState >= 2){
     chromaKeyFrameToCanvas();
-    const dx = MACHINE_BOX.x - 22, dy = MACHINE_BOX.y - 29;
-    const dw = MACHINE_BOX.w + 44, dh = MACHINE_BOX.h + 58;
+    // agora que o recorte ja bate com a proporcao real da maquina (1198x464),
+    // desenha direto na mesma caixa da maquina parada, sem padding extra.
+    const dx = MACHINE_BOX.x, dy = MACHINE_BOX.y;
+    const dw = MACHINE_BOX.w, dh = MACHINE_BOX.h;
     // o video foi gravado apontando para a esquerda; espelha horizontalmente
     // para bater com a maquina (ja virada para a direita) na cena parada.
     ctx.save();
