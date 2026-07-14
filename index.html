@@ -131,6 +131,91 @@ const TARGET_ZONE    = { x: 1650, y: 345, r: 55 };      // ancora no pescoco/omb
 const GROUND_Y       = 630;
 const DRAGON_HEAD_ZZZ = { x: 1530, y: 300 };
 
+// ---------- Sistema de "tipos" animados (video idle em loop + chroma key ao vivo) ----------
+// Cada tipo tem UM video compartilhado (nao um por instancia) -- processamos o
+// frame do video uma vez por tipo a cada frame de render, e "carimbamos" esse
+// mesmo frame ja recortado em varias posicoes na cena. Isso mantem leve mesmo
+// com 20+ bonecos na tela ao mesmo tempo.
+function makeLoopType(src, sx, sy, sw, sh, procW){
+  const video = document.createElement('video');
+  video.src = src;
+  video.loop = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.autoplay = true;
+  video.play().catch(()=>{});
+  const procH = Math.round(procW * (sh/sw));
+  const off = document.createElement('canvas');
+  off.width = procW; off.height = procH;
+  const octx = off.getContext('2d', { willReadFrequently: true });
+  return { video, sx, sy, sw, sh, canvas: off, ctx: octx, procW, procH };
+}
+
+// retangulos de origem (sx,sy,sw,sh) medidos no frame 1280x720 de cada video
+const soldierType = makeLoopType('soldado_idle.mp4',  422, 32, 328, 680, 90);
+const archerType  = makeLoopType('arqueiro_idle.mp4', 430, 32, 452, 676, 110);
+const bryneType   = makeLoopType('bryne_idle.mp4',    504, 32, 282, 676, 80);
+const machineType = makeLoopType('maquina_idle.mp4',   58,188,1198, 464, 220);
+
+function keyType(t){
+  if (t.video.readyState < 2) return false;
+  t.ctx.drawImage(t.video, t.sx, t.sy, t.sw, t.sh, 0, 0, t.procW, t.procH);
+  const frame = t.ctx.getImageData(0,0,t.procW,t.procH);
+  const d = frame.data;
+  for (let i=0; i<d.length; i+=4){
+    const r=d[i], g=d[i+1], b=d[i+2];
+    const diff = g - Math.max(r,b);
+    if (diff > 45){ d[i+3] = 0; }
+    else if (diff > 10){ d[i+3] = 255 * (1 - (diff-10)/35); }
+  }
+  t.ctx.putImageData(frame,0,0);
+  return true;
+}
+
+function stamp(t, x, y, targetH, flip){
+  const aspect = t.procW / t.procH;
+  const th = targetH, tw = targetH * aspect;
+  const destX = x - tw/2, destY = y - th;
+  ctx.save();
+  if (flip){
+    ctx.translate(destX + tw, destY);
+    ctx.scale(-1,1);
+    ctx.drawImage(t.canvas, 0, 0, tw, th);
+  } else {
+    ctx.drawImage(t.canvas, destX, destY, tw, th);
+  }
+  ctx.restore();
+}
+
+// ---------- Formação do exército (compacta, numa faixa de chão seguramente plana) ----------
+const crowd = [];
+(function buildCrowd(){
+  const zone_x0 = 150, zone_x1 = 430, baseY = 615;
+  const rows = [
+    { dy: 0,   scale: 1.00, n: 8 },
+    { dy: -24, scale: 0.93, n: 7 },
+    { dy: -46, scale: 0.87, n: 6 },
+  ];
+  const baseH = 44;
+  let seed = 12345;
+  function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return (seed % 10000)/10000; }
+  rows.forEach((row, ri) => {
+    const n = row.n;
+    const stagger = (ri % 2 === 1) ? (zone_x1-zone_x0)/n/2 : 0;
+    for (let ci=0; ci<n; ci++){
+      const x = zone_x0 + ci*(zone_x1-zone_x0)/(n-1) + stagger + (rnd()*14-7);
+      const y = baseY + row.dy + (rnd()*6-3);
+      const h = baseH * row.scale * (0.94 + rnd()*0.12);
+      const flip = rnd() < 0.5;
+      const isArcher = rnd() < 0.4;
+      crowd.push({ type: isArcher ? archerType : soldierType, x, y, h, flip });
+    }
+  });
+})();
+
+const BRYNE_POS = { x: 780, y: 615, h: 48 };
+const MACHINE_POS = { x: 640, y: 615, h: 50 };
+
 // ---------- Estado do jogo ----------
 let state = 'aim';           // aim | charging | firing_inplace | pov | result | gameover | phase_complete
 let angleDeg = 45;
@@ -246,6 +331,16 @@ function drawTargetZone(){
 function renderStatic(){
   ctx.clearRect(0,0,W,H);
   ctx.drawImage(bg,0,0,W,H);
+
+  keyType(soldierType); keyType(archerType); keyType(bryneType);
+  for (const u of crowd){ stamp(u.type, u.x, u.y, u.h, u.flip); }
+  stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
+
+  if (state !== 'firing_inplace'){
+    keyType(machineType);
+    stamp(machineType, MACHINE_POS.x, MACHINE_POS.y, MACHINE_POS.h, true);
+  }
+
   drawTargetZone();
   drawZzz();
   drawWind();
