@@ -164,6 +164,7 @@ function makeLoopPool(src, sx, sy, sw, sh, procW, poolSize){
 const soldierPool = makeLoopPool('soldado_idle.mp4',  422, 32, 328, 680, 90, 5);
 const soldierWalkPool = makeLoopPool('soldado_andando.mp4', 403, 32, 418, 688, 90, 3);
 const archerPool  = makeLoopPool('arqueiro_idle.mp4', 430, 32, 452, 676, 110, 4);
+const archerWalkPool = makeLoopPool('arqueiro_andando.mp4', 425, 0, 452, 706, 110, 3);
 const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 80, 1)[0];
 const machineType = makeLoopPool('maquina_idle.mp4',   58,188,1198, 464, 220, 1)[0];
 
@@ -225,7 +226,7 @@ const crowd = [];
       crowd.push({
         isArcher, x, y, h, flip,
         idlePool,
-        walkPool: isArcher ? null : soldierWalkPool,  // arqueiro nao tem video de andar ainda
+        walkPool: isArcher ? archerWalkPool : soldierWalkPool,
         currentItem: chosen,
         walking: false,
         dir: 0,
@@ -237,7 +238,7 @@ const crowd = [];
 
 function updateCrowd(now, dt){
   for (const u of crowd){
-    if (!u.walkPool) continue; // arqueiros ficam so no idle por enquanto
+    if (!u.walkPool) continue; // seguranca: so anda quem tem pool de andar definido
     if (now >= u.nextChange){
       if (u.walking){
         u.walking = false;
@@ -383,6 +384,7 @@ function renderStatic(){
   soldierPool.forEach(keyType);
   soldierWalkPool.forEach(keyType);
   archerPool.forEach(keyType);
+  archerWalkPool.forEach(keyType);
   keyType(bryneType);
   for (const u of crowd){ stamp(u.currentItem, u.x, u.y, u.h, u.flip); }
   stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
