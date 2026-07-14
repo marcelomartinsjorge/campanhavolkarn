@@ -68,7 +68,7 @@
 
 <div id="wrap">
   <canvas id="game" width="1983" height="793"></canvas>
-  <video id="povVideo" muted playsinline></video>
+  <video id="povVideo" playsinline></video>
   <div id="hud"></div>
 </div>
 
@@ -113,7 +113,6 @@ bg.src = 'cena.png';
 const povVideo = document.getElementById('povVideo');
 const fireVideo = document.createElement('video');
 fireVideo.src = 'disparo.mp4';
-fireVideo.muted = true;
 fireVideo.playsInline = true;
 
 // offscreen canvas p/ chroma key em tempo real do video de disparo
@@ -122,8 +121,9 @@ keyCanvas.width = 320; keyCanvas.height = 180;
 const keyCtx = keyCanvas.getContext('2d', { willReadFrequently: true });
 
 // ---------- Posições calibradas na cena (cena.png é 1983x793) ----------
-const MACHINE_BOX   = { x:752, y:547, w:176, h:68 };   // maquina "ativa" (a mais a frente, perto do Bryne)
-const MUZZLE        = { x: 915, y: 560 };              // ponta do lancador, apos o flip
+// maquina unica, em escala reduzida para bater com a altura dos soldados da tropa
+const MACHINE_BOX   = { x:575, y:565, w:129, h:50 };
+const MUZZLE        = { x: 695, y: 578 };              // ponta do lancador, apos o flip
 const TARGET_ZONE    = { x: 1650, y: 345, r: 55 };      // ancora no pescoco/ombro do Volkarn
 const GROUND_Y       = 630;
 const DRAGON_HEAD_ZZZ = { x: 1530, y: 300 };
@@ -240,27 +240,9 @@ function drawTargetZone(){
   ctx.restore();
 }
 
-function drawChains(hitPoints){
-  ctx.save();
-  ctx.strokeStyle = '#5a5248';
-  ctx.lineWidth = 4;
-  for (const p of hitPoints){
-    ctx.beginPath();
-    ctx.moveTo(MUZZLE.x, MUZZLE.y);
-    // curva simples pra parecer corrente frouxa presa
-    const midX = (MUZZLE.x + p.x)/2, midY = Math.max(MUZZLE.y,p.y) + 40;
-    ctx.quadraticCurveTo(midX, midY, p.x, p.y);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-let chainedPoints = [];
-
 function renderStatic(){
   ctx.clearRect(0,0,W,H);
   ctx.drawImage(bg,0,0,W,H);
-  drawChains(chainedPoints);
   drawTargetZone();
   drawZzz();
   drawWind();
@@ -296,7 +278,7 @@ function chromaKeyFrameToCanvas(){
 function drawFiringOverlay(){
   if (fireVideo.readyState >= 2){
     chromaKeyFrameToCanvas();
-    ctx.drawImage(keyCanvas, MACHINE_BOX.x - 30, MACHINE_BOX.y - 40, MACHINE_BOX.w + 60, MACHINE_BOX.h + 60);
+    ctx.drawImage(keyCanvas, MACHINE_BOX.x - 22, MACHINE_BOX.y - 29, MACHINE_BOX.w + 44, MACHINE_BOX.h + 58);
   }
 }
 
@@ -311,8 +293,20 @@ function startAimState(){
   setMsg('Mire o ângulo, segure o botão pra carregar força, e solte pra disparar. Tentativas restantes: ' + attempts);
 }
 
+let audioUnlocked = false;
+function unlockAudioOnce(){
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  // "aquece" o povVideo dentro do gesto direto do usuario, pra o play()
+  // assincrono mais tarde (depois do video de disparo) nao ser bloqueado
+  // pela politica de autoplay-com-som do navegador.
+  povVideo.muted = false;
+  povVideo.play().then(() => { povVideo.pause(); povVideo.currentTime = 0; }).catch(() => {});
+}
+
 function beginCharge(){
   if (state !== 'aim') return;
+  unlockAudioOnce();
   state = 'charging';
   charging = true;
   chargeStart = performance.now();
@@ -365,7 +359,6 @@ function onPovDone(){
   state = 'result';
 
   if (lastShotWasHit){
-    chainedPoints.push({x:TARGET_ZONE.x, y:TARGET_ZONE.y});
     state = 'phase_complete';
     setMsg('ACERTOU! A corrente prendeu firme no Volkarn. FASE 1 COMPLETA.');
     return;
