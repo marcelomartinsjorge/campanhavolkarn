@@ -22,6 +22,24 @@
     position:absolute; top:0; left:0; width:100%; height:100%;
     pointer-events:none;
   }
+  #gameOverOverlay{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    background:rgba(6,4,2,0.90);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:26px;
+    opacity:0; pointer-events:none;
+    transition:opacity 2s ease;
+    border-radius:4px; text-align:center;
+  }
+  #gameOverOverlay.show{ opacity:1; pointer-events:auto; }
+  #gameOverText{
+    font-size:30px; color:#e8d9a8; letter-spacing:0.5px; line-height:1.5;
+    text-shadow:0 2px 10px rgba(0,0,0,0.9);
+    max-width:80%;
+  }
+  #gameOverOverlay button{
+    font-size:16px; padding:12px 28px;
+  }
   #topbar{
     display:flex; justify-content:space-between; width:100%;
     max-width:1400px; padding:6px 4px; box-sizing:border-box;
@@ -71,6 +89,10 @@
   <video id="povVideoMiss" src="miss.mp4" playsinline preload="auto"></video>
   <video id="povVideoHit2" src="hit2.mp4" playsinline preload="auto"></video>
   <video id="povVideoMiss2" src="miss2.mp4" playsinline preload="auto"></video>
+  <div id="gameOverOverlay">
+    <div id="gameOverText">O Volkarn acordou<br>e dizimou o exército.</div>
+    <button id="retryBtn">Tentar de novo</button>
+  </div>
   <div id="hud"></div>
 </div>
 
@@ -96,7 +118,6 @@
 </div>
 
 <div id="msg">Mire o ângulo, segure o botão pra carregar força, e solte pra disparar.</div>
-<button id="retryBtn" style="display:none; margin-top:8px;">Tentar de novo</button>
 
 <p class="footNote">
   Protótipo v0 — física de arco/vento com valores provisórios pra teste de sensação.
@@ -202,7 +223,7 @@ function makeOnceType(src, sx, sy, sw, sh, procW){
   return { video, sx, sy, sw, sh, canvas: off, ctx: octx, procW, procH };
 }
 const dragonWakeType = makeOnceType('volkarn_acordando.mp4', 53,0,1227,635, 340);
-const dragonChainedType = makeLoopPool('volkarn_preso.mp4', 244,0,1036,696, 340, 1)[0];
+const dragonChainedType = makeLoopPool('volkarn_preso.mp4', 152,0,1128,701, 340, 1)[0];
 
 // ancora do dragao: mesmo ponto (centro-x, base-y) para as duas poses,
 // a largura visivel em tela fica constante (450px) e a altura acompanha
@@ -338,9 +359,18 @@ let lastShotWasHit = false;
 let dragonReactionUntil = 0;
 let phase = 1;
 const PHASE2_TARGET_AREA = { x0: 1520, y0: 290, x1: 1780, y1: 410 };
-function rollPhase2Target(){
-  TARGET_ZONE.x = PHASE2_TARGET_AREA.x0 + Math.random()*(PHASE2_TARGET_AREA.x1-PHASE2_TARGET_AREA.x0);
-  TARGET_ZONE.y = PHASE2_TARGET_AREA.y0 + Math.random()*(PHASE2_TARGET_AREA.y1-PHASE2_TARGET_AREA.y0);
+const phase2MoveSeed = Math.random()*1000;
+function updatePhase2Target(now){
+  // o alvo so se move durante a mira (state 'aim'); qualquer outro estado
+  // (carregando forca, disparando, pov, resultado) congela ele no lugar.
+  if (phase !== 2 || state !== 'aim') return;
+  const t = now/1000;
+  const cx = (PHASE2_TARGET_AREA.x0 + PHASE2_TARGET_AREA.x1)/2;
+  const cy = (PHASE2_TARGET_AREA.y0 + PHASE2_TARGET_AREA.y1)/2;
+  const rx = (PHASE2_TARGET_AREA.x1 - PHASE2_TARGET_AREA.x0)/2 - TARGET_ZONE.r;
+  const ry = (PHASE2_TARGET_AREA.y1 - PHASE2_TARGET_AREA.y0)/2 - TARGET_ZONE.r;
+  TARGET_ZONE.x = cx + Math.sin(t*0.7 + phase2MoveSeed) * rx;
+  TARGET_ZONE.y = cy + Math.cos(t*0.5 + phase2MoveSeed*1.3) * ry;
 }
 let msgEl = document.getElementById('msg');
 let angleValEl = document.getElementById('angleVal');
@@ -474,7 +504,7 @@ function renderStatic(){
       stamp(machineType, MACHINE_POS.x, MACHINE_POS.y, MACHINE_POS.h, true);
     } else {
       keyType(machine2Type);
-      stamp(machine2Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE2_H, true);
+      stamp(machine2Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE2_H, false);
     }
   }
 
@@ -508,6 +538,7 @@ function loop(){
   const dt = Math.min(0.1, (now - __lastFrameT)/1000);
   __lastFrameT = now;
   updateCrowd(now, dt);
+  updatePhase2Target(now);
   updateCharge();
 
   if (state==='aim' || state==='charging' || state==='result' || state==='gameover' || state==='phase_complete'){
@@ -553,13 +584,8 @@ function drawFiringOverlay(){
       chromaKeyFrameToCanvas2();
       const dx = MACHINE2_BOX.x, dy = MACHINE2_BOX.y;
       const dw = MACHINE2_BOX.w, dh = MACHINE2_BOX.h;
-      // mesma logica de espelhamento da maquina 1: video gravado apontando
-      // para a esquerda, espelha pra bater com a cena (virada pra direita).
-      ctx.save();
-      ctx.translate(dx + dw, dy);
-      ctx.scale(-1, 1);
-      ctx.drawImage(keyCanvas2, 0, 0, dw, dh);
-      ctx.restore();
+      // a maquina 2 ja vem apontando pra direita no video original -- sem espelhar.
+      ctx.drawImage(keyCanvas2, dx, dy, dw, dh);
     }
   }
 }
@@ -580,9 +606,10 @@ function startPhase2(){
   attempts = 3; // presumindo o mesmo numero de tentativas da fase 1 -- ajustavel
   attemptsValEl.textContent = attempts;
   TARGET_ZONE.r = 38; // alvo menor -- mais dificil de acertar
-  rollPhase2Target();
+  TARGET_ZONE.x = (PHASE2_TARGET_AREA.x0 + PHASE2_TARGET_AREA.x1)/2;
+  TARGET_ZONE.y = (PHASE2_TARGET_AREA.y0 + PHASE2_TARGET_AREA.y1)/2;
   startAimState();
-  setMsg('FASE 2 — Ataque nas fendas entre as escamas. O alvo muda de lugar a cada tentativa. Tentativas: ' + attempts);
+  setMsg('FASE 2 — Ataque nas fendas entre as escamas. O alvo se move; ele congela assim que você começar a carregar força. Tentativas: ' + attempts);
 }
 
 function triggerGameOver(){
@@ -590,8 +617,12 @@ function triggerGameOver(){
   dragonAwake = true;
   dragonWakeType.video.currentTime = 0;
   dragonWakeType.video.play().catch(()=>{});
-  setMsg('ERROU as 3 tentativas — o Volkarn acorda. GAME OVER.');
-  document.getElementById('retryBtn').style.display = 'inline-block';
+  setMsg('O Volkarn desperta...');
+  pollVideoEnd(dragonWakeType.video, showGameOverOverlay);
+}
+
+function showGameOverOverlay(){
+  document.getElementById('gameOverOverlay').classList.add('show');
 }
 
 function restartGame(){
@@ -600,7 +631,7 @@ function restartGame(){
   dragonAwake = false;
   dragonWakeType.video.pause();
   dragonWakeType.video.currentTime = 0;
-  document.getElementById('retryBtn').style.display = 'none';
+  document.getElementById('gameOverOverlay').classList.remove('show');
   startAimState();
 }
 document.getElementById('retryBtn').addEventListener('click', restartGame);
@@ -701,7 +732,6 @@ function onPovDone(){
     }
     return;
   }
-  if (phase === 2){ rollPhase2Target(); }
   setMsg('Errou. Restam ' + attempts + ' tentativa(s). Ajuste ângulo/força e tente de novo.');
   setTimeout(startAimState, 900);
 }
