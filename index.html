@@ -328,6 +328,16 @@ function stamp(t, x, y, targetH, flip){
 // ---------- Formação do exército (compacta, numa faixa de chão seguramente plana) ----------
 const CROWD_X_MIN = 150, CROWD_X_MAX = 430;
 const WALK_SPEED = 22; // px/s -- passo bem lento, so pra dar vida
+
+// fase 3: divide a formacao em 3 faixas -- cada uma vira um "grupo" de
+// combate (Grakh + soldados) e uma zona-alvo pra catapulta.
+const GROUP_BOUNDS = [0,1,2].map(i => ({
+  x0: CROWD_X_MIN + i*(CROWD_X_MAX-CROWD_X_MIN)/3,
+  x1: CROWD_X_MIN + (i+1)*(CROWD_X_MAX-CROWD_X_MIN)/3,
+}));
+const PHASE3_TARGETS = GROUP_BOUNDS.map(b => ({
+  x: (b.x0+b.x1)/2, y: 592, r: 34, hit: false,
+}));
 const crowd = [];
 (function buildCrowd(){
   const zone_x0 = CROWD_X_MIN, zone_x1 = CROWD_X_MAX, baseY = 615;
@@ -398,26 +408,36 @@ const grakhUnits = [];
 let grakhSpawnedCount = 0;
 let grakhNextSpawnAt = 0;
 
-function eligibleMeleeTarget(){
-  const pool = crowd.filter(u => !u.isArcher && !u.inMelee && !u.reservedForGrakh);
+function eligibleMeleeTargetInGroup(gi){
+  const b = GROUP_BOUNDS[gi];
+  const pool = crowd.filter(u => !u.isArcher && !u.inMelee && !u.reservedForGrakh && u.x >= b.x0 && u.x < b.x1);
   if (pool.length === 0) return null;
   return pool[Math.floor(Math.random()*pool.length)];
 }
 
+let grakhGroupCursor = 0;
 function spawnGrakh(){
-  const target = eligibleMeleeTarget();
-  if (!target) return false;
-  target.reservedForGrakh = true;
-  grakhUnits.push({
-    x: -60 - Math.random()*100,
-    y: target.y + (Math.random()*8 - 4),
-    targetUnit: target,
-    state: 'running',
-    currentItem: grakhRunPool[Math.floor(Math.random()*grakhRunPool.length)],
-    flip: false, // suposicao: o video "cru" corre para a direita -- ajustar se sair invertido
-  });
-  grakhSpawnedCount++;
-  return true;
+  // tenta distribuir os Grakh igualmente pelos 3 grupos; se o grupo da vez
+  // estiver sem soldado disponivel, tenta os outros dois antes de desistir.
+  for (let attempt=0; attempt<3; attempt++){
+    const gi = grakhGroupCursor % 3;
+    grakhGroupCursor++;
+    const target = eligibleMeleeTargetInGroup(gi);
+    if (target){
+      target.reservedForGrakh = true;
+      grakhUnits.push({
+        x: -60 - Math.random()*100,
+        y: target.y + (Math.random()*8 - 4),
+        targetUnit: target,
+        state: 'running',
+        currentItem: grakhRunPool[Math.floor(Math.random()*grakhRunPool.length)],
+        flip: false, // suposicao: o video "cru" corre para a direita -- ajustar se sair invertido
+      });
+      grakhSpawnedCount++;
+      return true;
+    }
+  }
+  return false;
 }
 
 function updateGrakh(now, dt){
@@ -494,6 +514,13 @@ let fireBtn = document.getElementById('fireBtn');
 
 const GRAVITY = 900;      // px/s^2
 const V_MIN = 550, V_MAX = 1500;
+// fase 3: alvo é a propria tropa, bem mais perto -- precisa de bem menos forca
+const MUZZLE_PHASE3 = { x: 593, y: 572 };
+const V_MIN_P3 = 200, V_MAX_P3 = 550;
+
+function currentMuzzle(){ return phase === 3 ? MUZZLE_PHASE3 : MUZZLE; }
+function currentVelRange(){ return phase === 3 ? {min:V_MIN_P3, max:V_MAX_P3} : {min:V_MIN, max:V_MAX}; }
+function currentFireDir(){ return phase === 3 ? -1 : 1; } // fase 3 atira para a esquerda
 
 function rollWind(){
   wind = (Math.random()*2 - 1) * 260; // -260..260
@@ -504,22 +531,30 @@ rollWind();
 function setMsg(t){ msgEl.textContent = t; }
 
 // ---------- Fisica da trajetoria ----------
-function simulateTrajectory(vel, angleRad, windAccel){
+// zones: array de {x,y,r}. Retorna tambem qual indice foi atingido (ou -1).
+function simulateTrajectory(vel, angleRad, windAccel, muzzle, zones, fireDir){
   const pts = [];
-  const vx0 = vel*Math.cos(angleRad);
+  const vx0 = vel*Math.cos(angleRad) * fireDir;
   const vy0 = -vel*Math.sin(angleRad);
   let t = 0, dt = 0.012;
-  let hit = false;
+  let hitIndex = -1;
   while (t < 4){
-    const x = MUZZLE.x + vx0*t + 0.5*windAccel*t*t;
-    const y = MUZZLE.y + vy0*t + 0.5*GRAVITY*t*t;
+    const x = muzzle.x + vx0*t + 0.5*windAccel*t*t;
+    const y = muzzle.y + vy0*t + 0.5*GRAVITY*t*t;
     pts.push({x,y});
-    const dx = x - TARGET_ZONE.x, dy = y - TARGET_ZONE.y;
-    if (Math.sqrt(dx*dx+dy*dy) <= TARGET_ZONE.r){ hit = true; break; }
+    for (let i=0; i<zones.length; i++){
+      const dx = x - zones[i].x, dy = y - zones[i].y;
+      if (Math.sqrt(dx*dx+dy*dy) <= zones[i].r){ hitIndex = i; break; }
+    }
+    if (hitIndex !== -1) break;
     if (y > GROUND_Y || x > W+40 || x < -40) break;
     t += dt;
   }
-  return {pts, hit};
+  return {pts, hit: hitIndex !== -1, hitIndex};
+}
+
+function currentTargetZones(){
+  return phase === 3 ? PHASE3_TARGETS : [TARGET_ZONE];
 }
 
 // ---------- Loop de desenho ----------
@@ -574,9 +609,10 @@ function drawZzz(){
 }
 
 function drawTrajectoryPreview(){
-  const vel = V_MIN + power*(V_MAX-V_MIN);
+  const vr = currentVelRange();
+  const vel = vr.min + power*(vr.max-vr.min);
   const rad = angleDeg * Math.PI/180;
-  const {pts} = simulateTrajectory(vel, rad, wind);
+  const {pts} = simulateTrajectory(vel, rad, wind, currentMuzzle(), currentTargetZones(), currentFireDir());
   ctx.save();
   ctx.fillStyle = '#ffd27a';
   for (let i=0;i<pts.length;i+=4){
@@ -590,12 +626,21 @@ function drawTrajectoryPreview(){
 
 function drawTargetZone(){
   ctx.save();
-  ctx.strokeStyle = state==='phase_complete' ? '#7CFC00' : 'rgba(255,80,60,0.75)';
   ctx.lineWidth = 2;
   ctx.setLineDash([5,5]);
-  ctx.beginPath();
-  ctx.arc(TARGET_ZONE.x, TARGET_ZONE.y, TARGET_ZONE.r, 0, Math.PI*2);
-  ctx.stroke();
+  if (phase === 3){
+    for (const z of PHASE3_TARGETS){
+      ctx.strokeStyle = z.hit ? '#7CFC00' : 'rgba(255,80,60,0.75)';
+      ctx.beginPath();
+      ctx.arc(z.x, z.y, z.r, 0, Math.PI*2);
+      ctx.stroke();
+    }
+  } else {
+    ctx.strokeStyle = state==='phase_complete' ? '#7CFC00' : 'rgba(255,80,60,0.75)';
+    ctx.beginPath();
+    ctx.arc(TARGET_ZONE.x, TARGET_ZONE.y, TARGET_ZONE.r, 0, Math.PI*2);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -636,7 +681,7 @@ function renderStatic(){
       stamp(machine2Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE2_H, false);
     } else {
       if (__frameParity === 0) keyType(machine3Type);
-      stamp(machine3Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE3_H, false);
+      stamp(machine3Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE3_H, true);
     }
   }
 
@@ -708,6 +753,13 @@ function chromaKeyFrameToCanvas2(){
   keyCtx2.putImageData(frame,0,0);
 }
 
+function chromaKeyFrameToCanvas3(){
+  keyCtx3.drawImage(fireVideo3, 31, 0, 1236, 693, 0, 0, keyCanvas3.width, keyCanvas3.height);
+  const frame = keyCtx3.getImageData(0,0,keyCanvas3.width,keyCanvas3.height);
+  chromaKeyImageData(frame.data);
+  keyCtx3.putImageData(frame,0,0);
+}
+
 function drawFiringOverlay(){
   if (phase === 1){
     if (fireVideo.readyState >= 2){
@@ -720,13 +772,26 @@ function drawFiringOverlay(){
       ctx.drawImage(keyCanvas, 0, 0, dw, dh);
       ctx.restore();
     }
-  } else {
+  } else if (phase === 2){
     if (fireVideo2.readyState >= 2){
       chromaKeyFrameToCanvas2();
       const dx = MACHINE2_BOX.x, dy = MACHINE2_BOX.y;
       const dw = MACHINE2_BOX.w, dh = MACHINE2_BOX.h;
       // a maquina 2 ja vem apontando pra direita no video original -- sem espelhar.
       ctx.drawImage(keyCanvas2, dx, dy, dw, dh);
+    }
+  } else {
+    if (fireVideo3.readyState >= 2){
+      chromaKeyFrameToCanvas3();
+      const dx = MACHINE3_BOX.x, dy = MACHINE3_BOX.y;
+      const dw = MACHINE3_BOX.w, dh = MACHINE3_BOX.h;
+      // fase 3: a catapulta atira para a esquerda (contra a propria tropa),
+      // entao espelha igual fizemos na maquina 1.
+      ctx.save();
+      ctx.translate(dx + dw, dy);
+      ctx.scale(-1, 1);
+      ctx.drawImage(keyCanvas3, 0, 0, dw, dh);
+      ctx.restore();
     }
   }
 }
@@ -756,13 +821,17 @@ function startPhase2(){
 function startPhase3(){
   phase = 3;
   BRYNE_POS = BRYNE_POS_PHASE3;
+  attempts = 5;
+  attemptsValEl.textContent = attempts;
+  for (const z of PHASE3_TARGETS){ z.hit = false; }
   // reinicia o sistema de Grakh (util tambem se o jogador reiniciar o jogo depois)
   grakhUnits.length = 0;
   grakhSpawnedCount = 0;
+  grakhGroupCursor = 0;
   grakhNextSpawnAt = performance.now() + 1500;
   for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
-  state = 'aim';
-  setMsg('FASE 3 — Os Grakh invadem pela esquerda. (Objetivo de mira da Fase 3 ainda não implementado nesse teste — por ora, aproveite pra ver a cena.)');
+  startAimState();
+  setMsg('FASE 3 — Os Grakh invadem pela esquerda. A catapulta virou contra a própria tropa. Mire nos 3 grupos. Tentativas: 5');
 }
 
 let dragonBroken = false;
@@ -802,6 +871,8 @@ function restartGame(){
   dragonBreakType.video.currentTime = 0;
   grakhUnits.length = 0;
   grakhSpawnedCount = 0;
+  grakhGroupCursor = 0;
+  for (const z of PHASE3_TARGETS){ z.hit = false; }
   for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
   document.getElementById('gameOverOverlay').classList.remove('show');
   startAimState();
@@ -851,14 +922,17 @@ function releaseCharge(){
   fireShot();
 }
 
+let lastHitIndex = -1;
 function fireShot(){
-  const vel = V_MIN + power*(V_MAX-V_MIN);
+  const vr = currentVelRange();
+  const vel = vr.min + power*(vr.max-vr.min);
   const rad = angleDeg * Math.PI/180;
-  const {hit} = simulateTrajectory(vel, rad, wind);
+  const {hit, hitIndex} = simulateTrajectory(vel, rad, wind, currentMuzzle(), currentTargetZones(), currentFireDir());
   lastShotWasHit = hit;
+  lastHitIndex = hitIndex;
   state = 'firing_inplace';
   setMsg('Disparando...');
-  const activeFireVideo = phase === 1 ? fireVideo : fireVideo2;
+  const activeFireVideo = phase === 1 ? fireVideo : (phase === 2 ? fireVideo2 : fireVideo3);
   activeFireVideo.currentTime = 0;
   activeFireVideo.play();
   pollVideoEnd(activeFireVideo, onFiringAnimDone);
@@ -866,13 +940,14 @@ function fireShot(){
 
 function onFiringAnimDone(){
   state = 'pov';
+  // fase 3 ainda nao tem POV proprio -- reaproveita os da fase 2 como placeholder
   const hitVideo = phase === 1 ? povVideoHit : povVideoHit2;
   const missVideo = phase === 1 ? povVideoMiss : povVideoMiss2;
   activePovVideo = lastShotWasHit ? hitVideo : missVideo;
   activePovVideo.style.display = 'block';
   activePovVideo.currentTime = 0;
   activePovVideo.play().catch(err => console.warn('POV play falhou:', err));
-  const proj = phase === 1 ? 'arpão' : 'viga';
+  const proj = phase === 1 ? 'arpão' : (phase === 2 ? 'viga' : 'pedra');
   setMsg(lastShotWasHit ? `A ${proj} voa em direção ao alvo...` : `A ${proj} voa... será que vai acertar?`);
   pollVideoEnd(activePovVideo, onPovDone);
 }
@@ -882,16 +957,37 @@ function onPovDone(){
   activePovVideo.style.display = 'none';
   state = 'result';
 
+  if (phase === 3){
+    attempts -= 1;
+    attemptsValEl.textContent = attempts;
+    if (lastShotWasHit && lastHitIndex !== -1){
+      PHASE3_TARGETS[lastHitIndex].hit = true;
+    }
+    const allHit = PHASE3_TARGETS.every(z => z.hit);
+    if (allHit){
+      triggerPhase3Ending(true);
+      return;
+    }
+    if (attempts <= 0){
+      triggerPhase3Ending(false);
+      return;
+    }
+    const remaining = PHASE3_TARGETS.filter(z => !z.hit).length;
+    setMsg((lastShotWasHit
+      ? 'Um grupo foi atingido.'
+      : 'Não atingiu nenhum grupo.') + ` Faltam ${remaining} grupo(s). Tentativas restantes: ${attempts}`);
+    setTimeout(startAimState, 900);
+    return;
+  }
+
   if (lastShotWasHit){
     state = 'phase_complete';
     if (phase === 1){
       setMsg('ACERTOU! A corrente prendeu firme no Volkarn. Preparando Fase 2...');
       setTimeout(startPhase2, 1800);
-    } else if (phase === 2){
+    } else {
       setMsg('ACERTOU! Preparando Fase 3...');
       setTimeout(startPhase3, 1800);
-    } else {
-      setMsg('FASE 3 em andamento (objetivo de mira ainda não implementado nesse teste).');
     }
     return;
   }
@@ -907,6 +1003,18 @@ function onPovDone(){
   }
   setMsg('Errou. Restam ' + attempts + ' tentativa(s). Ajuste ângulo/força e tente de novo.');
   setTimeout(startAimState, 900);
+}
+
+function triggerPhase3Ending(success){
+  state = 'gameover';
+  dragonBroken = true;
+  dragonBreakType.video.currentTime = 0;
+  dragonBreakType.video.play().catch(()=>{});
+  setMsg('O Volkarn se solta das correntes...');
+  const text = success
+    ? 'A ordem de Tamel se cumpre.<br>As pedras caem sobre a própria retaguarda —<br>não há mais tempo para deter o que foi feito.<br>No caos, as correntes de Volkarn cedem.'
+    : 'Tamel luta contra o próprio corpo,<br>mas a possessão já tomou os braços da tropa.<br>O cerco desmorona — e as correntes de Volkarn cedem de qualquer forma.';
+  pollVideoEnd(dragonBreakType.video, () => showGameOverOverlay(text));
 }
 
 // poll em vez de 'ended' (evita bug de eventos que nao disparam em alguns formatos)
