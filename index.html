@@ -224,6 +224,11 @@ const soldierPool = makeLoopPool('soldado_idle.mp4',  422, 32, 328, 680, 115, 5)
 const soldierWalkPool = makeLoopPool('soldado_andando.mp4', 403, 32, 418, 688, 115, 3);
 const archerPool  = makeLoopPool('arqueiro_idle.mp4', 430, 32, 452, 676, 135, 4);
 const archerWalkPool = makeLoopPool('arqueiro_andando.mp4', 425, 0, 452, 706, 135, 3);
+
+// ---------- Fase 3: soldado no corpo a corpo, e os Grakh ----------
+const soldierAtkPool = makeLoopPool('soldado_atacando.mp4', 0,0,1280,720, 115, 4);
+const grakhRunPool = makeLoopPool('grakh_correndo.mp4', 0,0,945,720, 100, 4);
+const grakhAtkPool = makeLoopPool('grakh_atacando.mp4', 0,0,1091,720, 100, 4);
 const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 100, 1)[0];
 const machineType = makeLoopPool('maquina_idle.mp4',   58,188,1198, 464, 260, 1)[0];
 
@@ -240,6 +245,18 @@ fireVideo2.playsInline = true;
 const keyCanvas2 = document.createElement('canvas');
 keyCanvas2.width = 300; keyCanvas2.height = Math.round(300 * (668/1252));
 const keyCtx2 = keyCanvas2.getContext('2d', { willReadFrequently: true });
+
+// ---------- Máquina 3 (catapulta, Fase 3) ----------
+const machine3Type = makeLoopPool('maquina3_idle.mp4', 135,267,1756,752, 260, 1)[0];
+const MACHINE3_H = 50;
+const MACHINE3_W = MACHINE3_H * (1756/752);
+
+const fireVideo3 = document.createElement('video');
+fireVideo3.src = 'disparo3.mp4';
+fireVideo3.playsInline = true;
+const keyCanvas3 = document.createElement('canvas');
+keyCanvas3.width = 300; keyCanvas3.height = Math.round(300 * (693/1236));
+const keyCtx3 = keyCanvas3.getContext('2d', { willReadFrequently: true });
 
 // dragao: dormindo fica em loop normal; acordando toca uma vez so, disparado no game over
 const dragonSleepType = makeLoopPool('volkarn_dormindo.mp4', 76,250,1148,359, 340, 1)[0];
@@ -348,6 +365,7 @@ const crowd = [];
 
 function updateCrowd(now, dt){
   for (const u of crowd){
+    if (u.inMelee) continue; // travado no combate -- nao vaga enquanto luta
     if (!u.walkPool) continue; // seguranca: so anda quem tem pool de andar definido
     if (now >= u.nextChange){
       if (u.walking){
@@ -372,13 +390,74 @@ function updateCrowd(now, dt){
   }
 }
 
-const BRYNE_POS = { x: 780, y: 615, h: 48 };
+// ---------- Fase 3: Grakh invadindo pela esquerda, pareados 1-a-1 com soldados ----------
+const GRAKH_TOTAL = 9;
+const GRAKH_H = 50;
+const GRAKH_RUN_SPEED = 130; // px/s
+const grakhUnits = [];
+let grakhSpawnedCount = 0;
+let grakhNextSpawnAt = 0;
+
+function eligibleMeleeTarget(){
+  const pool = crowd.filter(u => !u.isArcher && !u.inMelee && !u.reservedForGrakh);
+  if (pool.length === 0) return null;
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+function spawnGrakh(){
+  const target = eligibleMeleeTarget();
+  if (!target) return false;
+  target.reservedForGrakh = true;
+  grakhUnits.push({
+    x: -60 - Math.random()*100,
+    y: target.y + (Math.random()*8 - 4),
+    targetUnit: target,
+    state: 'running',
+    currentItem: grakhRunPool[Math.floor(Math.random()*grakhRunPool.length)],
+    flip: false, // suposicao: o video "cru" corre para a direita -- ajustar se sair invertido
+  });
+  grakhSpawnedCount++;
+  return true;
+}
+
+function updateGrakh(now, dt){
+  if (phase === 3 && grakhSpawnedCount < GRAKH_TOTAL && now >= grakhNextSpawnAt){
+    const howMany = Math.random() < 0.5 ? 1 : 2;
+    for (let i=0; i<howMany && grakhSpawnedCount<GRAKH_TOTAL; i++){ spawnGrakh(); }
+    grakhNextSpawnAt = now + 2200 + Math.random()*1800;
+  }
+  for (const g of grakhUnits){
+    if (g.state === 'running'){
+      const destX = g.targetUnit.x - 20;
+      const dx = destX - g.x;
+      if (Math.abs(dx) < 4){
+        g.state = 'fighting';
+        g.currentItem = grakhAtkPool[Math.floor(Math.random()*grakhAtkPool.length)];
+        g.targetUnit.inMelee = true;
+        g.targetUnit.meleeItem = soldierAtkPool[Math.floor(Math.random()*soldierAtkPool.length)];
+        g.targetUnit.meleeFlip = true; // soldado vira de frente para o Grakh, que vem da esquerda
+      } else {
+        g.x += Math.sign(dx) * GRAKH_RUN_SPEED * dt;
+      }
+    }
+  }
+}
+
+let BRYNE_POS = { x: 780, y: 615, h: 48 };
+const BRYNE_POS_PHASE1_2 = { x: 780, y: 615, h: 48 };
+const BRYNE_POS_PHASE3 = { x: 1420, y: 605, h: 48 }; // em frente ao dragao acorrentado
 const MACHINE_POS = { x: 640, y: 615, h: 50 };
 const MACHINE2_BOX = {
   x: MACHINE_POS.x - MACHINE2_W/2,
   y: MACHINE_POS.y - MACHINE2_H,
   w: MACHINE2_W,
   h: MACHINE2_H,
+};
+const MACHINE3_BOX = {
+  x: MACHINE_POS.x - MACHINE3_W/2,
+  y: MACHINE_POS.y - MACHINE3_H,
+  w: MACHINE3_W,
+  h: MACHINE3_H,
 };
 
 // ---------- Estado do jogo ----------
@@ -531,20 +610,33 @@ function renderStatic(){
   if (__frameParity === 0){
     soldierPool.forEach(keyType);
     soldierWalkPool.forEach(keyType);
+    soldierAtkPool.forEach(keyType);
     archerPool.forEach(keyType);
     archerWalkPool.forEach(keyType);
+    grakhRunPool.forEach(keyType);
+    grakhAtkPool.forEach(keyType);
     keyType(bryneType);
   }
-  for (const u of crowd){ stamp(u.currentItem, u.x, u.y, u.h, u.flip); }
+  for (const u of crowd){
+    if (u.inMelee){
+      stamp(u.meleeItem, u.x, u.y, u.h, u.meleeFlip);
+    } else {
+      stamp(u.currentItem, u.x, u.y, u.h, u.flip);
+    }
+  }
+  for (const g of grakhUnits){ stamp(g.currentItem, g.x, g.y, GRAKH_H, g.flip); }
   stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
 
   if (state !== 'firing_inplace'){
     if (phase === 1){
       if (__frameParity === 0) keyType(machineType);
       stamp(machineType, MACHINE_POS.x, MACHINE_POS.y, MACHINE_POS.h, true);
-    } else {
+    } else if (phase === 2){
       if (__frameParity === 0) keyType(machine2Type);
       stamp(machine2Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE2_H, false);
+    } else {
+      if (__frameParity === 0) keyType(machine3Type);
+      stamp(machine3Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE3_H, false);
     }
   }
 
@@ -587,6 +679,7 @@ function loop(){
   __frameParity = 1 - __frameParity;
   updateCrowd(now, dt);
   updatePhase2Target(now);
+  updateGrakh(now, dt);
   updateCharge();
 
   if (state==='aim' || state==='charging' || state==='result' || state==='gameover' || state==='phase_complete'){
@@ -660,6 +753,18 @@ function startPhase2(){
   setMsg('FASE 2 — Ataque nas fendas entre as escamas. O alvo se move; ele congela assim que você começar a carregar força. Tentativas: ' + attempts);
 }
 
+function startPhase3(){
+  phase = 3;
+  BRYNE_POS = BRYNE_POS_PHASE3;
+  // reinicia o sistema de Grakh (util tambem se o jogador reiniciar o jogo depois)
+  grakhUnits.length = 0;
+  grakhSpawnedCount = 0;
+  grakhNextSpawnAt = performance.now() + 1500;
+  for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
+  state = 'aim';
+  setMsg('FASE 3 — Os Grakh invadem pela esquerda. (Objetivo de mira da Fase 3 ainda não implementado nesse teste — por ora, aproveite pra ver a cena.)');
+}
+
 let dragonBroken = false;
 
 function triggerGameOver(){
@@ -688,12 +793,16 @@ function restartGame(){
   attempts = 3;
   attemptsValEl.textContent = attempts;
   phase = 1;
+  BRYNE_POS = BRYNE_POS_PHASE1_2;
   dragonAwake = false;
   dragonBroken = false;
   dragonWakeType.video.pause();
   dragonWakeType.video.currentTime = 0;
   dragonBreakType.video.pause();
   dragonBreakType.video.currentTime = 0;
+  grakhUnits.length = 0;
+  grakhSpawnedCount = 0;
+  for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
   document.getElementById('gameOverOverlay').classList.remove('show');
   startAimState();
 }
@@ -778,8 +887,11 @@ function onPovDone(){
     if (phase === 1){
       setMsg('ACERTOU! A corrente prendeu firme no Volkarn. Preparando Fase 2...');
       setTimeout(startPhase2, 1800);
+    } else if (phase === 2){
+      setMsg('ACERTOU! Preparando Fase 3...');
+      setTimeout(startPhase3, 1800);
     } else {
-      setMsg('ACERTOU! FASE 2 COMPLETA. (Fase 3 ainda não implementada nesse teste.)');
+      setMsg('FASE 3 em andamento (objetivo de mira ainda não implementado nesse teste).');
     }
     return;
   }
