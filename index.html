@@ -74,6 +74,24 @@
   }
   #angleVal, #windVal, #attemptsVal{ font-weight:bold; color:#e8d9a8; }
   .footNote{ font-size:11px; color:#777; max-width:1400px; padding:0 6px 14px; }
+  #introOverlay{
+    position:fixed; top:0; left:0; width:100%; height:100%;
+    background:rgba(4,3,2,0.93);
+    display:flex; align-items:center; justify-content:center;
+    z-index:1000;
+    transition:opacity 0.5s ease;
+  }
+  #introBox{
+    max-width:640px; padding:0 20px; color:#e8d9a8; line-height:1.6;
+    font-size:15px;
+  }
+  #introBox h2{ font-size:22px; color:#f0e2b6; margin-bottom:14px; }
+  #introBox button{
+    margin-top:10px; background:#2a2620; color:#e8e0cf; border:1px solid #6b5f45;
+    padding:10px 22px; border-radius:3px; cursor:pointer; font-size:15px;
+    font-family: Georgia, serif;
+  }
+  #introBox button:hover{ background:#3a3428; }
 </style>
 </head>
 <body>
@@ -94,6 +112,22 @@
     <button id="retryBtn">Tentar de novo</button>
   </div>
   <div id="hud"></div>
+</div>
+
+<div id="introOverlay">
+  <div id="introBox">
+    <h2>Antes de mirar</h2>
+    <p>Você controla o <strong>ângulo</strong> e a <strong>força</strong> do disparo. O
+    <strong>vento</strong> (seta no canto superior esquerdo da cena) empurra o projétil
+    para o lado — mas só enquanto ele está no ar.</p>
+    <p>É por isso que ângulo e vento se relacionam: um ângulo <strong>mais alto</strong> faz
+    o disparo subir mais e ficar mais tempo no ar, dando mais tempo pro vento desviar a
+    trajetória. Um ângulo <strong>mais baixo</strong> (mais direto) chega mais rápido e sofre
+    menos com o vento — mas exige mais força pra cobrir a mesma distância.</p>
+    <p>Use o guia pontilhado enquanto mira pra ver como ângulo + força + vento juntos vão
+    se comportar, antes de soltar o disparo.</p>
+    <button id="introBtn">Entendi, vamos começar</button>
+  </div>
 </div>
 
 <div id="controls">
@@ -214,7 +248,6 @@ function makeOnceType(src, sx, sy, sw, sh, procW){
   const video = document.createElement('video');
   video.src = src;
   video.loop = false;
-  video.muted = true;
   video.playsInline = true;
   const procH = Math.round(procW * (sh/sw));
   const off = document.createElement('canvas');
@@ -223,6 +256,7 @@ function makeOnceType(src, sx, sy, sw, sh, procW){
   return { video, sx, sy, sw, sh, canvas: off, ctx: octx, procW, procH };
 }
 const dragonWakeType = makeOnceType('volkarn_acordando.mp4', 53,0,1227,635, 340);
+const dragonBreakType = makeOnceType('volkarn_solta.mp4', 17,0,1263,720, 340);
 const dragonChainedType = makeLoopPool('volkarn_preso.mp4', 152,0,1128,701, 340, 1)[0];
 
 // ancora do dragao: mesmo ponto (centro-x, base-y) para as duas poses,
@@ -490,38 +524,50 @@ function renderStatic(){
   ctx.clearRect(0,0,W,H);
   ctx.drawImage(bg,0,0,W,H);
 
-  soldierPool.forEach(keyType);
-  soldierWalkPool.forEach(keyType);
-  archerPool.forEach(keyType);
-  archerWalkPool.forEach(keyType);
-  keyType(bryneType);
+  // a tropa (soldados/arqueiros/bryne) e reprocessada a cada 2 frames --
+  // e uma animacao ambiente sutil, nao precisa de 60fps de reprocessamento
+  // de chroma key, e isso tira uma boa fatia de custo por frame (menos
+  // getImageData/putImageData), ajudando a barra de forca ficar fluida.
+  if (__frameParity === 0){
+    soldierPool.forEach(keyType);
+    soldierWalkPool.forEach(keyType);
+    archerPool.forEach(keyType);
+    archerWalkPool.forEach(keyType);
+    keyType(bryneType);
+  }
   for (const u of crowd){ stamp(u.currentItem, u.x, u.y, u.h, u.flip); }
   stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
 
   if (state !== 'firing_inplace'){
     if (phase === 1){
-      keyType(machineType);
+      if (__frameParity === 0) keyType(machineType);
       stamp(machineType, MACHINE_POS.x, MACHINE_POS.y, MACHINE_POS.h, true);
     } else {
-      keyType(machine2Type);
+      if (__frameParity === 0) keyType(machine2Type);
       stamp(machine2Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE2_H, false);
     }
   }
 
   if (phase === 1){
     if (dragonAwake){
-      keyType(dragonWakeType);
+      keyType(dragonWakeType); // video de transformacao unica -- sempre no frame cheio
       const th = DRAGON_W_ON_SCREEN * (dragonWakeType.procH / dragonWakeType.procW);
       stamp(dragonWakeType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
     } else {
-      keyType(dragonSleepType);
+      if (__frameParity === 0) keyType(dragonSleepType);
       const th = DRAGON_W_ON_SCREEN * (dragonSleepType.procH / dragonSleepType.procW);
       stamp(dragonSleepType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
     }
   } else {
-    keyType(dragonChainedType);
-    const th = DRAGON_W_ON_SCREEN * (dragonChainedType.procH / dragonChainedType.procW);
-    stamp(dragonChainedType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
+    if (dragonBroken){
+      keyType(dragonBreakType); // video de transformacao unica -- sempre no frame cheio
+      const th = DRAGON_W_ON_SCREEN * (dragonBreakType.procH / dragonBreakType.procW);
+      stamp(dragonBreakType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
+    } else {
+      if (__frameParity === 0) keyType(dragonChainedType);
+      const th = DRAGON_W_ON_SCREEN * (dragonChainedType.procH / dragonChainedType.procW);
+      stamp(dragonChainedType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
+    }
   }
 
   drawTargetZone();
@@ -533,10 +579,12 @@ function renderStatic(){
 }
 
 let __lastFrameT = performance.now();
+let __frameParity = 0;
 function loop(){
   const now = performance.now();
   const dt = Math.min(0.1, (now - __lastFrameT)/1000);
   __lastFrameT = now;
+  __frameParity = 1 - __frameParity;
   updateCrowd(now, dt);
   updatePhase2Target(now);
   updateCharge();
@@ -612,29 +660,49 @@ function startPhase2(){
   setMsg('FASE 2 — Ataque nas fendas entre as escamas. O alvo se move; ele congela assim que você começar a carregar força. Tentativas: ' + attempts);
 }
 
+let dragonBroken = false;
+
 function triggerGameOver(){
   state = 'gameover';
-  dragonAwake = true;
-  dragonWakeType.video.currentTime = 0;
-  dragonWakeType.video.play().catch(()=>{});
-  setMsg('O Volkarn desperta...');
-  pollVideoEnd(dragonWakeType.video, showGameOverOverlay);
+  if (phase === 1){
+    dragonAwake = true;
+    dragonWakeType.video.currentTime = 0;
+    dragonWakeType.video.play().catch(()=>{});
+    setMsg('O Volkarn desperta...');
+    pollVideoEnd(dragonWakeType.video, () => showGameOverOverlay('O Volkarn acordou<br>e dizimou o exército.'));
+  } else {
+    dragonBroken = true;
+    dragonBreakType.video.currentTime = 0;
+    dragonBreakType.video.play().catch(()=>{});
+    setMsg('O Volkarn se solta das correntes...');
+    pollVideoEnd(dragonBreakType.video, () => showGameOverOverlay('O Volkarn se libertou<br>e dizimou o exército.'));
+  }
 }
 
-function showGameOverOverlay(){
+function showGameOverOverlay(text){
+  document.getElementById('gameOverText').innerHTML = text;
   document.getElementById('gameOverOverlay').classList.add('show');
 }
 
 function restartGame(){
   attempts = 3;
   attemptsValEl.textContent = attempts;
+  phase = 1;
   dragonAwake = false;
+  dragonBroken = false;
   dragonWakeType.video.pause();
   dragonWakeType.video.currentTime = 0;
+  dragonBreakType.video.pause();
+  dragonBreakType.video.currentTime = 0;
   document.getElementById('gameOverOverlay').classList.remove('show');
   startAimState();
 }
 document.getElementById('retryBtn').addEventListener('click', restartGame);
+document.getElementById('introBtn').addEventListener('click', () => {
+  const el = document.getElementById('introOverlay');
+  el.style.opacity = '0';
+  setTimeout(() => { el.style.display = 'none'; }, 500);
+});
 
 let audioUnlocked = false;
 function unlockAudioOnce(){
@@ -643,7 +711,7 @@ function unlockAudioOnce(){
   // toca um instante de cada video real (ja com src carregado) dentro do
   // gesto direto do usuario, pra o play() assincrono mais tarde (depois do
   // video de disparo) nao ser bloqueado pela politica de autoplay-com-som.
-  [povVideoHit, povVideoMiss, povVideoHit2, povVideoMiss2].forEach(v => {
+  [povVideoHit, povVideoMiss, povVideoHit2, povVideoMiss2, dragonWakeType.video, dragonBreakType.video].forEach(v => {
     v.play().then(() => { v.pause(); v.currentTime = 0; }).catch(() => {});
   });
 }
@@ -722,14 +790,7 @@ function onPovDone(){
     dragonReactionUntil = performance.now() + 1400; // "?!" por 1.4s antes de voltar ao zzz
   }
   if (attempts <= 0){
-    if (phase === 1){
-      triggerGameOver();
-    } else {
-      // suposicao: na fase 2 esgotar tentativas so reinicia a fase (sem game over
-      // permanente) -- me avisa se voce quiser uma consequencia diferente aqui.
-      setMsg('Errou as 3 tentativas da Fase 2. Recomeçando a fase...');
-      setTimeout(startPhase2, 1600);
-    }
+    triggerGameOver();
     return;
   }
   setMsg('Errou. Restam ' + attempts + ' tentativa(s). Ajuste ângulo/força e tente de novo.');
