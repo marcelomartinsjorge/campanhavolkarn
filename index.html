@@ -14,7 +14,7 @@
     position:relative; width:100%; max-width:1400px; margin-top:10px;
   }
   canvas{ width:100%; display:block; background:#111; border-radius:4px; }
-  video#povVideoHit, video#povVideoMiss, video#povVideoHit2, video#povVideoMiss2{
+  video#povVideoHit, video#povVideoMiss, video#povVideoHit2, video#povVideoMiss2, video#povVideoHit3, video#povVideoMiss3{
     position:absolute; top:0; left:0; width:100%; height:100%;
     object-fit:cover; display:none; border-radius:4px; background:#000;
   }
@@ -107,6 +107,8 @@
   <video id="povVideoMiss" src="miss.mp4" playsinline preload="auto"></video>
   <video id="povVideoHit2" src="hit2.mp4" playsinline preload="auto"></video>
   <video id="povVideoMiss2" src="miss2.mp4" playsinline preload="auto"></video>
+  <video id="povVideoHit3" src="hit3.mp4" playsinline preload="auto"></video>
+  <video id="povVideoMiss3" src="miss3.mp4" playsinline preload="auto"></video>
   <div id="gameOverOverlay">
     <div id="gameOverText">O Volkarn acordou<br>e dizimou o exército.</div>
     <button id="retryBtn">Tentar de novo</button>
@@ -172,6 +174,8 @@ const povVideoHit = document.getElementById('povVideoHit');
 const povVideoMiss = document.getElementById('povVideoMiss');
 const povVideoHit2 = document.getElementById('povVideoHit2');
 const povVideoMiss2 = document.getElementById('povVideoMiss2');
+const povVideoHit3 = document.getElementById('povVideoHit3');
+const povVideoMiss3 = document.getElementById('povVideoMiss3');
 let activePovVideo = null;
 const fireVideo = document.createElement('video');
 fireVideo.src = 'disparo.mp4';
@@ -967,7 +971,7 @@ function unlockAudioOnce(){
   // toca um instante de cada video real (ja com src carregado) dentro do
   // gesto direto do usuario, pra o play() assincrono mais tarde (depois do
   // video de disparo) nao ser bloqueado pela politica de autoplay-com-som.
-  [povVideoHit, povVideoMiss, povVideoHit2, povVideoMiss2, dragonWakeType.video, dragonBreakType.video].forEach(v => {
+  [povVideoHit, povVideoMiss, povVideoHit2, povVideoMiss2, povVideoHit3, povVideoMiss3, dragonWakeType.video, dragonBreakType.video].forEach(v => {
     v.play().then(() => { v.pause(); v.currentTime = 0; }).catch(() => {});
   });
 }
@@ -1017,8 +1021,8 @@ function fireShot(){
 function onFiringAnimDone(){
   state = 'pov';
   // fase 3 ainda nao tem POV proprio -- reaproveita os da fase 2 como placeholder
-  const hitVideo = phase === 1 ? povVideoHit : povVideoHit2;
-  const missVideo = phase === 1 ? povVideoMiss : povVideoMiss2;
+  const hitVideo = phase === 1 ? povVideoHit : (phase === 2 ? povVideoHit2 : povVideoHit3);
+  const missVideo = phase === 1 ? povVideoMiss : (phase === 2 ? povVideoMiss2 : povVideoMiss3);
   activePovVideo = lastShotWasHit ? hitVideo : missVideo;
   activePovVideo.style.display = 'block';
   activePovVideo.currentTime = 0;
