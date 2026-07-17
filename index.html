@@ -249,9 +249,14 @@ const AMBIENT_BUDGET = 6; // quantos tipos reprocessar por frame (ajustavel)
 let ambientCursor = 0;
 function processAmbientTypes(){
   const n = AMBIENT_TYPES.length;
-  for (let i=0; i<AMBIENT_BUDGET; i++){
-    keyType(AMBIENT_TYPES[ambientCursor % n]);
+  let processed = 0, tries = 0;
+  while (processed < AMBIENT_BUDGET && tries < n){
+    const t = AMBIENT_TYPES[ambientCursor % n];
     ambientCursor++;
+    tries++;
+    if (t.video.paused) continue; // fora da fase atual -- nao gasta o turno
+    keyType(t);
+    processed++;
   }
 }
 const machineType = makeLoopPool('maquina_idle.mp4',   58,188,1198, 464, 260, 1)[0];
@@ -403,22 +408,23 @@ const PHASE3_CLUSTERS = [
 const PHASE3_TARGETS = PHASE3_CLUSTERS.map(c => ({ x: c.x, y: c.y - 25, r: 42, hit: false }));
 const crowd = [];
 (function buildCrowd(){
-  const zone_x0 = CROWD_X_MIN, zone_x1 = CROWD_X_MAX, baseY = 615;
+  const zone_x0 = CROWD_X_MIN, zone_x1 = CROWD_X_MAX;
   const rows = [
-    { dy: 0,   scale: 1.00, n: 8 },
-    { dy: -24, scale: 0.93, n: 7 },
-    { dy: -46, scale: 0.87, n: 6 },
+    { y: 615, scale: 1.00, n: 8 },
+    { y: 591, scale: 0.93, n: 7 },
+    { y: 569, scale: 0.87, n: 6 },
   ];
   const baseH = 44;
   let seed = 12345;
   function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return (seed % 10000)/10000; }
-  rows.forEach((row, ri) => {
+  rows.forEach((row) => {
     const n = row.n;
-    const stagger = (ri % 2 === 1) ? (zone_x1-zone_x0)/n/2 : 0;
+    // grade exata, sem stagger e sem jitter -- evita qualquer chance de
+    // sobrepor pedras/ruinas do cenario ou dois soldados na mesma posicao.
     for (let ci=0; ci<n; ci++){
-      const x = zone_x0 + ci*(zone_x1-zone_x0)/(n-1) + stagger + (rnd()*14-7);
-      const y = baseY + row.dy + (rnd()*6-3);
-      const h = baseH * row.scale * (0.94 + rnd()*0.12);
+      const x = zone_x0 + ci*(zone_x1-zone_x0)/(n-1);
+      const y = row.y;
+      const h = baseH * row.scale;
       const flip = rnd() < 0.5;
       const isArcher = rnd() < 0.4;
       const idlePool = isArcher ? archerPool : soldierPool;
@@ -477,6 +483,12 @@ function eligibleMeleeTarget(){
   return pool[Math.floor(Math.random()*pool.length)];
 }
 
+// posicoes fixas dentro de cada cluster -- nao mais jitter aleatorio. Cada
+// duelo novo ocupa a proxima vaga livre, bem espacada das outras (~65px),
+// entao nunca dois duelos caem em cima um do outro.
+const DUEL_SLOT_OFFSETS = [-65, 65, -130, 130, 0];
+const clusterSlotCounters = [0, 0, 0];
+
 let grakhGroupCursor = 0;
 function spawnGrakh(){
   const target = eligibleMeleeTarget();
@@ -484,11 +496,13 @@ function spawnGrakh(){
   const gi = grakhGroupCursor % 3;
   grakhGroupCursor++;
   const cluster = PHASE3_CLUSTERS[gi];
+  const slot = clusterSlotCounters[gi] % DUEL_SLOT_OFFSETS.length;
+  clusterSlotCounters[gi]++;
   target.reservedForGrakh = true;
-  target.clusterX = cluster.x + (Math.random()*30 - 15);
-  target.clusterY = cluster.y + (Math.random()*10 - 5);
+  target.clusterX = cluster.x + DUEL_SLOT_OFFSETS[slot];
+  target.clusterY = cluster.y;
   grakhUnits.push({
-    x: -60 - Math.random()*100,
+    x: -60 - grakhSpawnedCount*40, // espaca a entrada de cada Grakh, evita que corram grudados
     y: target.clusterY,
     targetUnit: target,
     state: 'running',
@@ -587,7 +601,7 @@ let fireBtn = document.getElementById('fireBtn');
 const GRAVITY = 900;      // px/s^2
 const V_MIN = 550, V_MAX = 1500;
 // fase 3: alvo é a propria tropa, bem mais perto -- precisa de bem menos forca
-const MUZZLE_PHASE3 = { x: 1283, y: 568 };
+const MUZZLE_PHASE3 = { x: 1377, y: 568 }; // aproximado -- ainda precisa de conferencia visual
 const V_MIN_P3 = 200, V_MAX_P3 = 550;
 
 function currentMuzzle(){ return phase === 3 ? MUZZLE_PHASE3 : MUZZLE; }
@@ -747,7 +761,7 @@ function renderStatic(){
       stamp(machine2Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE2_H, false);
     } else {
       keyType(machine3Type);
-      stamp(machine3Type, MACHINE_POS_PHASE3.x, MACHINE_POS_PHASE3.y, MACHINE3_H, true);
+      stamp(machine3Type, MACHINE_POS_PHASE3.x, MACHINE_POS_PHASE3.y, MACHINE3_H, false);
     }
   }
 
@@ -769,7 +783,7 @@ function renderStatic(){
     } else if (phase === 3){
       keyType(dragonStruggleType);
       const th = DRAGON_W_ON_SCREEN * (dragonStruggleType.procH / dragonStruggleType.procW);
-      stamp(dragonStruggleType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
+      stamp(dragonStruggleType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, true);
     } else {
       keyType(dragonChainedType);
       const th = DRAGON_W_ON_SCREEN * (dragonChainedType.procH / dragonChainedType.procW);
@@ -853,13 +867,8 @@ function drawFiringOverlay(){
       chromaKeyFrameToCanvas3();
       const dx = MACHINE3_BOX.x, dy = MACHINE3_BOX.y;
       const dw = MACHINE3_BOX.w, dh = MACHINE3_BOX.h;
-      // fase 3: a catapulta atira para a esquerda (contra a propria tropa),
-      // entao espelha igual fizemos na maquina 1.
-      ctx.save();
-      ctx.translate(dx + dw, dy);
-      ctx.scale(-1, 1);
-      ctx.drawImage(keyCanvas3, 0, 0, dw, dh);
-      ctx.restore();
+      // o video ja vem apontando na direcao certa (igual a idle) -- sem espelhar.
+      ctx.drawImage(keyCanvas3, dx, dy, dw, dh);
     }
   }
 }
@@ -911,6 +920,7 @@ function startPhase3(){
   grakhUnits.length = 0;
   grakhSpawnedCount = 0;
   grakhGroupCursor = 0;
+  clusterSlotCounters[0]=0; clusterSlotCounters[1]=0; clusterSlotCounters[2]=0;
   grakhNextSpawnAt = performance.now() + 1500;
   for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
   startAimState();
@@ -959,6 +969,7 @@ function restartGame(){
   grakhUnits.length = 0;
   grakhSpawnedCount = 0;
   grakhGroupCursor = 0;
+  clusterSlotCounters[0]=0; clusterSlotCounters[1]=0; clusterSlotCounters[2]=0;
   for (const z of PHASE3_TARGETS){ z.hit = false; }
   for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
   applyPhaseVideoPlayback();
@@ -1072,9 +1083,15 @@ function onPovDone(){
     state = 'phase_complete';
     if (phase === 1){
       setMsg('ACERTOU! A corrente prendeu firme no Volkarn. Preparando Fase 2...');
+      // pre-aquece os videos da fase 2 durante a mensagem de transicao, pra nao
+      // aparecerem "travados" no primeiro instante em que a cena troca.
+      setPoolPlaying(machine2Type, true);
+      setPoolPlaying(dragonChainedType, true);
       setTimeout(startPhase2, 1800);
     } else {
       setMsg('ACERTOU! Preparando Fase 3...');
+      setPoolPlaying(machine3Type, true);
+      setPoolPlaying(dragonStruggleType, true);
       setTimeout(startPhase3, 1800);
     }
     return;
