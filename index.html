@@ -230,6 +230,26 @@ const soldierAtkPool = makeLoopPool('soldado_atacando.mp4', 0,0,1280,720, 115, 4
 const grakhRunPool = makeLoopPool('grakh_correndo.mp4', 0,0,945,720, 100, 4);
 const grakhAtkPool = makeLoopPool('grakh_atacando.mp4', 0,0,1091,720, 100, 4);
 const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 100, 1)[0];
+
+// ---------- Processamento em rodizio das animacoes ambiente ----------
+// Em vez de reprocessar todos os ~28 videos de uma vez a cada 2 frames (o que
+// causa um "soluco" perceptivel), processa so um numero fixo e pequeno por
+// frame, girando por uma fila -- custo constante e suave em vez de picos.
+const AMBIENT_TYPES = [
+  ...soldierPool, ...soldierWalkPool, ...soldierAtkPool,
+  ...archerPool, ...archerWalkPool,
+  ...grakhRunPool, ...grakhAtkPool,
+  bryneType,
+];
+const AMBIENT_BUDGET = 6; // quantos tipos reprocessar por frame (ajustavel)
+let ambientCursor = 0;
+function processAmbientTypes(){
+  const n = AMBIENT_TYPES.length;
+  for (let i=0; i<AMBIENT_BUDGET; i++){
+    keyType(AMBIENT_TYPES[ambientCursor % n]);
+    ambientCursor++;
+  }
+}
 const machineType = makeLoopPool('maquina_idle.mp4',   58,188,1198, 464, 260, 1)[0];
 
 // ---------- Máquina 2 (lança-vigas de Vant-Côvado, Fase 2) ----------
@@ -275,6 +295,42 @@ function makeOnceType(src, sx, sy, sw, sh, procW){
 const dragonWakeType = makeOnceType('volkarn_acordando.mp4', 53,0,1227,635, 340);
 const dragonBreakType = makeOnceType('volkarn_solta.mp4', 17,0,1263,720, 340);
 const dragonChainedType = makeLoopPool('volkarn_preso.mp4', 152,0,1128,701, 340, 1)[0];
+
+// ---------- Pausa videos que nao pertencem a fase atual ----------
+// Cada video em loop fica decodificando o tempo todo, mesmo quando nao e
+// desenhado -- com ~13 pools (uns 33 videos ao todo) isso pesa muito mais
+// que o proprio chroma key. Toca so o que a fase atual realmente usa.
+function setPoolPlaying(poolOrType, playing){
+  const items = Array.isArray(poolOrType) ? poolOrType : [poolOrType];
+  for (const t of items){
+    if (playing){ t.video.play().catch(()=>{}); }
+    else { t.video.pause(); }
+  }
+}
+
+function applyPhaseVideoPlayback(){
+  // usados em todas as fases
+  setPoolPlaying(soldierPool, true);
+  setPoolPlaying(soldierWalkPool, true);
+  setPoolPlaying(archerPool, true);
+  setPoolPlaying(archerWalkPool, true);
+  setPoolPlaying(bryneType, true);
+
+  // so usados na fase 3 (corpo a corpo com os Grakh)
+  setPoolPlaying(soldierAtkPool, phase === 3);
+  setPoolPlaying(grakhRunPool, phase === 3);
+  setPoolPlaying(grakhAtkPool, phase === 3);
+
+  // uma maquina por fase
+  setPoolPlaying(machineType, phase === 1);
+  setPoolPlaying(machine2Type, phase === 2);
+  setPoolPlaying(machine3Type, phase === 3);
+
+  // dragao dormindo so na fase 1 (e so se ainda nao acordou);
+  // dragao preso nas fases 2 e 3 (e so se ainda nao se soltou)
+  setPoolPlaying(dragonSleepType, phase === 1 && !dragonAwake);
+  setPoolPlaying(dragonChainedType, phase !== 1 && !dragonBroken);
+}
 
 // ancora do dragao: mesmo ponto (centro-x, base-y) para as duas poses,
 // a largura visivel em tela fica constante (450px) e a altura acompanha
@@ -660,16 +716,7 @@ function renderStatic(){
   // e uma animacao ambiente sutil, nao precisa de 60fps de reprocessamento
   // de chroma key, e isso tira uma boa fatia de custo por frame (menos
   // getImageData/putImageData), ajudando a barra de forca ficar fluida.
-  if (__frameParity === 0){
-    soldierPool.forEach(keyType);
-    soldierWalkPool.forEach(keyType);
-    soldierAtkPool.forEach(keyType);
-    archerPool.forEach(keyType);
-    archerWalkPool.forEach(keyType);
-    grakhRunPool.forEach(keyType);
-    grakhAtkPool.forEach(keyType);
-    keyType(bryneType);
-  }
+  processAmbientTypes();
   for (const u of crowd){
     if (u.inMelee){
       stamp(u.meleeItem, u.x, u.y, u.h, u.meleeFlip);
@@ -685,13 +732,13 @@ function renderStatic(){
 
   if (state !== 'firing_inplace'){
     if (phase === 1){
-      if (__frameParity === 0) keyType(machineType);
+      keyType(machineType);
       stamp(machineType, MACHINE_POS.x, MACHINE_POS.y, MACHINE_POS.h, true);
     } else if (phase === 2){
-      if (__frameParity === 0) keyType(machine2Type);
+      keyType(machine2Type);
       stamp(machine2Type, MACHINE_POS.x, MACHINE_POS.y, MACHINE2_H, false);
     } else {
-      if (__frameParity === 0) keyType(machine3Type);
+      keyType(machine3Type);
       stamp(machine3Type, MACHINE_POS_PHASE3.x, MACHINE_POS_PHASE3.y, MACHINE3_H, true);
     }
   }
@@ -702,7 +749,7 @@ function renderStatic(){
       const th = DRAGON_W_ON_SCREEN * (dragonWakeType.procH / dragonWakeType.procW);
       stamp(dragonWakeType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
     } else {
-      if (__frameParity === 0) keyType(dragonSleepType);
+      keyType(dragonSleepType);
       const th = DRAGON_W_ON_SCREEN * (dragonSleepType.procH / dragonSleepType.procW);
       stamp(dragonSleepType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
     }
@@ -712,7 +759,7 @@ function renderStatic(){
       const th = DRAGON_W_ON_SCREEN * (dragonBreakType.procH / dragonBreakType.procW);
       stamp(dragonBreakType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
     } else {
-      if (__frameParity === 0) keyType(dragonChainedType);
+      keyType(dragonChainedType);
       const th = DRAGON_W_ON_SCREEN * (dragonChainedType.procH / dragonChainedType.procW);
       stamp(dragonChainedType, DRAGON_ANCHOR.x, DRAGON_ANCHOR.y, th, false);
     }
@@ -727,12 +774,10 @@ function renderStatic(){
 }
 
 let __lastFrameT = performance.now();
-let __frameParity = 0;
 function loop(){
   const now = performance.now();
   const dt = Math.min(0.1, (now - __lastFrameT)/1000);
   __lastFrameT = now;
-  __frameParity = 1 - __frameParity;
   updateCrowd(now, dt);
   updatePhase2Target(now);
   updateGrakh(now, dt);
@@ -830,6 +875,7 @@ function startAimState(){
 function startPhase2(){
   phase = 2;
   updatePhaseLabel();
+  applyPhaseVideoPlayback();
   attempts = 3; // presumindo o mesmo numero de tentativas da fase 1 -- ajustavel
   attemptsValEl.textContent = attempts;
   attemptsMaxValEl.textContent = attempts;
@@ -843,6 +889,7 @@ function startPhase2(){
 function startPhase3(){
   phase = 3;
   updatePhaseLabel();
+  applyPhaseVideoPlayback();
   BRYNE_POS = BRYNE_POS_PHASE3;
   attempts = 5;
   attemptsValEl.textContent = attempts;
@@ -864,12 +911,14 @@ function triggerGameOver(){
   state = 'gameover';
   if (phase === 1){
     dragonAwake = true;
+    setPoolPlaying(dragonSleepType, false);
     dragonWakeType.video.currentTime = 0;
     dragonWakeType.video.play().catch(()=>{});
     setMsg('O Volkarn desperta...');
     pollVideoEnd(dragonWakeType.video, () => showGameOverOverlay('O Volkarn acordou<br>e dizimou o exército.'));
   } else {
     dragonBroken = true;
+    setPoolPlaying(dragonChainedType, false);
     dragonBreakType.video.currentTime = 0;
     dragonBreakType.video.play().catch(()=>{});
     setMsg('O Volkarn se solta das correntes...');
@@ -900,6 +949,7 @@ function restartGame(){
   grakhGroupCursor = 0;
   for (const z of PHASE3_TARGETS){ z.hit = false; }
   for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
+  applyPhaseVideoPlayback();
   document.getElementById('gameOverOverlay').classList.remove('show');
   startAimState();
 }
@@ -1034,6 +1084,7 @@ function onPovDone(){
 function triggerPhase3Ending(success){
   state = 'gameover';
   dragonBroken = true;
+  setPoolPlaying(dragonChainedType, false);
   dragonBreakType.video.currentTime = 0;
   dragonBreakType.video.play().catch(()=>{});
   setMsg('O Volkarn se solta das correntes...');
@@ -1078,6 +1129,7 @@ window.addEventListener('touchend', releaseCharge);
 
 // ---------- Start ----------
 bg.onload = () => {
+  applyPhaseVideoPlayback();
   startAimState();
   loop();
 };
