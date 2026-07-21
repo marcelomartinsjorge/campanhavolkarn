@@ -95,9 +95,9 @@
 
   #bryneSpeech{
     position:absolute;
-    left:39%; top:50%;
+    left:39.3%; bottom:31%;
     transform:translateX(-50%);
-    width:250px;
+    width:300px;
     opacity:0; pointer-events:none;
     transition:opacity 0.6s ease;
     z-index:60; cursor:pointer;
@@ -274,6 +274,9 @@ const archerWalkPool = makeLoopPool('arqueiro_andando.mp4', 425, 0, 452, 706, 13
 const soldierAtkPool = makeLoopPool('soldado_atacando.mp4', 0,0,1280,720, 115, 4);
 const grakhRunPool = makeLoopPool('grakh_correndo.mp4', 0,0,945,720, 100, 4);
 const grakhAtkPool = makeLoopPool('grakh_atacando.mp4', 0,0,1091,720, 100, 4);
+// esse video especifico ficava com franja verde residual -- threshold mais
+// agressivo so nele, sem arriscar mudar os outros que ja estao bons.
+grakhAtkPool.forEach(t => { t.highT = 26; t.lowT = 15; });
 const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 100, 1)[0];
 
 // ---------- Processamento em rodizio das animacoes ambiente ----------
@@ -393,14 +396,16 @@ const DRAGON_ANCHOR = { x: 1698, y: 430 };
 const DRAGON_W_ON_SCREEN = 450;
 let dragonAwake = false;
 
-function chromaKeyImageData(d){
+function chromaKeyImageData(d, highT, lowT){
+  highT = highT || 36;
+  lowT = lowT || 12;
   for (let i=0; i<d.length; i+=4){
     const r=d[i], g=d[i+1], b=d[i+2];
     const maxRB = Math.max(r,b);
     const diff = g - maxRB;
     let a;
-    if (diff > 36){ a = 0; }
-    else if (diff > 12){ a = 255 * (1 - (diff-12)/24); }
+    if (diff > highT){ a = 0; }
+    else if (diff > lowT){ a = 255 * (1 - (diff-lowT)/(highT-lowT)); }
     else { a = 255; }
     d[i+3] = a;
     // despill: sem isso, pixels de borda semi-transparentes mantem a cor
@@ -415,7 +420,7 @@ function keyType(t){
   if (t.video.readyState < 2) return false;
   t.ctx.drawImage(t.video, t.sx, t.sy, t.sw, t.sh, 0, 0, t.procW, t.procH);
   const frame = t.ctx.getImageData(0,0,t.procW,t.procH);
-  chromaKeyImageData(frame.data);
+  chromaKeyImageData(frame.data, t.highT, t.lowT);
   t.ctx.putImageData(frame,0,0);
   return true;
 }
@@ -513,7 +518,7 @@ function updateCrowd(now, dt){
 // ---------- Fase 3: Grakh invadindo pela esquerda, pareados 1-a-1 com soldados ----------
 const GRAKH_TOTAL = 9;
 const GRAKH_H = 50;
-const GRAKH_RUN_SPEED = 420; // px/s -- bem mais rapido (antes levava ate 11s pra cruzar o mapa)
+const GRAKH_RUN_SPEED = 170; // px/s -- ritmo natural de corrida
 const grakhUnits = [];
 let grakhSpawnedCount = 0;
 let grakhNextSpawnAt = 0;
@@ -543,7 +548,7 @@ function spawnGrakh(){
   target.clusterX = cluster.x + DUEL_SLOT_OFFSETS[slot];
   target.clusterY = cluster.y;
   grakhUnits.push({
-    x: -60 - grakhSpawnedCount*40, // espaca a entrada de cada Grakh, evita que corram grudados
+    x: target.clusterX - 300 - Math.random()*140, // nasce perto do proprio cluster, vindo da esquerda dele
     y: target.clusterY,
     targetUnit: target,
     state: 'running',
