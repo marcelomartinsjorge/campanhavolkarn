@@ -472,7 +472,7 @@ function updateCrowd(now, dt){
 // ---------- Fase 3: Grakh invadindo pela esquerda, pareados 1-a-1 com soldados ----------
 const GRAKH_TOTAL = 9;
 const GRAKH_H = 50;
-const GRAKH_RUN_SPEED = 130; // px/s
+const GRAKH_RUN_SPEED = 420; // px/s -- bem mais rapido (antes levava ate 11s pra cruzar o mapa)
 const grakhUnits = [];
 let grakhSpawnedCount = 0;
 let grakhNextSpawnAt = 0;
@@ -517,7 +517,7 @@ function updateGrakh(now, dt){
   if (phase === 3 && grakhSpawnedCount < GRAKH_TOTAL && now >= grakhNextSpawnAt){
     const howMany = Math.random() < 0.5 ? 1 : 2;
     for (let i=0; i<howMany && grakhSpawnedCount<GRAKH_TOTAL; i++){ spawnGrakh(); }
-    grakhNextSpawnAt = now + 2200 + Math.random()*1800;
+    grakhNextSpawnAt = now + 1600 + Math.random()*1200;
   }
   for (const g of grakhUnits){
     if (g.state === 'running'){
@@ -602,7 +602,7 @@ const GRAVITY = 900;      // px/s^2
 const V_MIN = 550, V_MAX = 1500;
 // fase 3: alvo é a propria tropa, bem mais perto -- precisa de bem menos forca
 const MUZZLE_PHASE3 = { x: 1377, y: 568 }; // aproximado -- ainda precisa de conferencia visual
-const V_MIN_P3 = 200, V_MAX_P3 = 550;
+const V_MIN_P3 = 550, V_MAX_P3 = 1150; // recalibrado: catapulta ficou mais longe dos 3 alvos
 
 function currentMuzzle(){ return phase === 3 ? MUZZLE_PHASE3 : MUZZLE; }
 function currentVelRange(){ return phase === 3 ? {min:V_MIN_P3, max:V_MAX_P3} : {min:V_MIN, max:V_MAX}; }
@@ -921,7 +921,7 @@ function startPhase3(){
   grakhSpawnedCount = 0;
   grakhGroupCursor = 0;
   clusterSlotCounters[0]=0; clusterSlotCounters[1]=0; clusterSlotCounters[2]=0;
-  grakhNextSpawnAt = performance.now() + 1500;
+  grakhNextSpawnAt = performance.now() + 700;
   for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
   startAimState();
   setMsg('FASE 3 — Os Grakh invadem pela esquerda. A catapulta virou contra a própria tropa. Mire nos 3 grupos. Tentativas: 5');
@@ -1087,12 +1087,12 @@ function onPovDone(){
       // aparecerem "travados" no primeiro instante em que a cena troca.
       setPoolPlaying(machine2Type, true);
       setPoolPlaying(dragonChainedType, true);
-      setTimeout(startPhase2, 1800);
+      setTimeout(startPhase2, 2400);
     } else {
       setMsg('ACERTOU! Preparando Fase 3...');
       setPoolPlaying(machine3Type, true);
       setPoolPlaying(dragonStruggleType, true);
-      setTimeout(startPhase3, 1800);
+      setTimeout(startPhase3, 2400);
     }
     return;
   }
