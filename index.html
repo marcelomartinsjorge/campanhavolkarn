@@ -67,7 +67,8 @@
     border-radius:3px; overflow:hidden;
   }
   #powerBarInner{
-    height:100%; width:0%; background:linear-gradient(90deg,#8a3a1e,#d97c2b);
+    height:100%; width:100%; background:linear-gradient(90deg,#8a3a1e,#d97c2b);
+    transform:scaleX(0); transform-origin:left center; will-change:transform;
   }
   #msg{
     min-height:22px; font-size:15px; color:#e8d9a8; letter-spacing:0.3px;
@@ -77,7 +78,7 @@
   #introOverlay{
     position:fixed; top:0; left:0; width:100%; height:100%;
     background:rgba(4,3,2,0.93);
-    display:flex; align-items:center; justify-content:center;
+    display:none; align-items:center; justify-content:center;
     z-index:1000;
     transition:opacity 0.5s ease;
   }
@@ -126,9 +127,38 @@
     border-right:9px solid transparent;
     border-top:13px solid rgba(10,8,6,0.93);
   }
+
+  #cutsceneOverlay{
+    position:fixed; top:0; left:0; width:100%; height:100%;
+    background:#000; z-index:2000;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #cutsceneVideo{
+    width:100%; height:100%; object-fit:contain; background:#000;
+  }
+  #cutsceneStartBtn{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:rgba(20,16,10,0.85); color:#e8d9a8; border:1px solid #8a7a55;
+    padding:16px 30px; border-radius:4px; cursor:pointer;
+    font-family:Georgia, serif; font-size:17px; letter-spacing:0.5px;
+  }
+  #cutsceneStartBtn:hover{ background:rgba(40,32,20,0.9); }
+  #cutsceneSkipHint{
+    position:absolute; bottom:22px; right:26px; color:#ddd0ad;
+    font-family:Georgia, serif; font-size:13px; opacity:0;
+    transition:opacity 0.4s ease; text-shadow:0 1px 4px rgba(0,0,0,0.8);
+  }
+  #cutsceneSkipHint.show{ opacity:0.85; }
 </style>
 </head>
 <body>
+
+<div id="cutsceneOverlay">
+  <video id="cutsceneVideo" src="cutscene1.mp4" playsinline></video>
+  <div id="cutsceneStartBtn">▶ Clique para começar</div>
+  <div id="cutsceneSkipHint">Pressione ESC para pular</div>
+</div>
+
 
 <div id="topbar">
   <div>AS QUATRO VONTADES — <em>A Queda das Raízes</em></div>
@@ -664,11 +694,11 @@ function setMsg(t){ msgEl.textContent = t; }
 
 // ---------- Fisica da trajetoria ----------
 // zones: array de {x,y,r}. Retorna tambem qual indice foi atingido (ou -1).
-function simulateTrajectory(vel, angleRad, windAccel, muzzle, zones, fireDir){
+function simulateTrajectory(vel, angleRad, windAccel, muzzle, zones, fireDir, dtOverride){
   const pts = [];
   const vx0 = vel*Math.cos(angleRad) * fireDir;
   const vy0 = -vel*Math.sin(angleRad);
-  let t = 0, dt = 0.012;
+  let t = 0, dt = dtOverride || 0.012;
   let hitIndex = -1;
   while (t < 4){
     const x = muzzle.x + vx0*t + 0.5*windAccel*t*t;
@@ -744,7 +774,7 @@ function drawTrajectoryPreview(){
   const vr = currentVelRange();
   const vel = vr.min + power*(vr.max-vr.min);
   const rad = angleDeg * Math.PI/180;
-  const {pts} = simulateTrajectory(vel, rad, wind, currentMuzzle(), currentTargetZones(), currentFireDir());
+  const {pts} = simulateTrajectory(vel, rad, wind, currentMuzzle(), currentTargetZones(), currentFireDir(), 0.02);
   ctx.save();
   ctx.fillStyle = '#ffd27a';
   for (let i=0;i<pts.length;i+=4){
@@ -784,7 +814,7 @@ function renderStatic(){
   // e uma animacao ambiente sutil, nao precisa de 60fps de reprocessamento
   // de chroma key, e isso tira uma boa fatia de custo por frame (menos
   // getImageData/putImageData), ajudando a barra de forca ficar fluida.
-  processAmbientTypes();
+  if (state !== 'charging'){ processAmbientTypes(); }
   for (const u of crowd){
     if (u.inMelee){
       stamp(u.meleeItem, u.x, u.y, u.h, u.meleeFlip);
@@ -932,7 +962,7 @@ function updatePhaseLabel(){
 function startAimState(){
   state = 'aim';
   power = 0;
-  powerBarInner.style.width = '0%';
+  powerBarInner.style.transform = 'scaleX(0)';
   fireBtn.classList.remove('charging');
   fireBtn.textContent = 'SEGURE PARA CARREGAR FORÇA';
   rollWind();
@@ -1064,7 +1094,7 @@ function updateCharge(){
   if (!charging) return;
   const elapsed = (performance.now() - chargeStart)/1000;
   power = Math.min(1, elapsed/1.6); // 1.6s pra carga maxima
-  powerBarInner.style.width = (power*100).toFixed(0) + '%';
+  powerBarInner.style.transform = 'scaleX(' + power + ')';
   if (power >= 1){ releaseCharge(); }
 }
 
@@ -1211,11 +1241,50 @@ window.addEventListener('touchend', releaseCharge);
 // updateCharge agora roda dentro do loop() principal (mesmo relogio do rAF),
 // evitando o "gaguejo" de ter dois timers independentes atualizando a barra.
 
+// ---------- Cutscene inicial (so na primeira partida da sessao) ----------
+let cutscenePlayed = false;
+
+function showIntroOverlay(){
+  document.getElementById('introOverlay').style.display = 'flex';
+}
+
+function initOpening(){
+  if (cutscenePlayed){
+    showIntroOverlay();
+    return;
+  }
+  const overlay = document.getElementById('cutsceneOverlay');
+  const video = document.getElementById('cutsceneVideo');
+  const startBtn = document.getElementById('cutsceneStartBtn');
+  const skipHint = document.getElementById('cutsceneSkipHint');
+
+  function finishCutscene(){
+    video.pause();
+    overlay.style.display = 'none';
+    cutscenePlayed = true;
+    document.removeEventListener('keydown', onKeyDown);
+    showIntroOverlay();
+  }
+
+  function onKeyDown(e){
+    if (e.key === 'Escape'){ finishCutscene(); }
+  }
+
+  startBtn.addEventListener('click', () => {
+    startBtn.style.display = 'none';
+    video.play().catch(() => { finishCutscene(); }); // se o play falhar, nao trava o jogador
+    skipHint.classList.add('show');
+    document.addEventListener('keydown', onKeyDown);
+    pollVideoEnd(video, finishCutscene);
+  }, { once: true });
+}
+
 // ---------- Start ----------
 bg.onload = () => {
   applyPhaseVideoPlayback();
   startAimState();
   loop();
+  initOpening();
 };
 </script>
 </body>
