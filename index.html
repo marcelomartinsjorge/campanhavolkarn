@@ -40,6 +40,30 @@
   #gameOverOverlay button{
     font-size:16px; padding:12px 28px;
   }
+  #scoreOverlay{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    background:rgba(6,4,2,0.93);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none;
+    transition:opacity 1.2s ease;
+    border-radius:4px; z-index:70;
+  }
+  #scoreOverlay.show{ opacity:1; pointer-events:auto; }
+  #scoreBox{
+    text-align:center; color:#e8d9a8; max-width:80%;
+  }
+  #scoreBox h2{ font-size:22px; color:#f0e2b6; margin-bottom:10px; }
+  #scoreTotal{
+    font-size:64px; font-weight:bold; color:#ffd27a;
+    text-shadow:0 2px 10px rgba(0,0,0,0.8); margin:8px 0 18px;
+  }
+  #scoreBreakdown{ font-size:15px; line-height:1.8; margin-bottom:20px; }
+  #scoreRestartBtn{
+    font-size:16px; padding:12px 28px;
+    background:#2a2620; color:#e8e0cf; border:1px solid #6b5f45;
+    border-radius:3px; cursor:pointer; font-family:Georgia, serif;
+  }
+  #scoreRestartBtn:hover{ background:#3a3428; }
   #topbar{
     display:flex; justify-content:space-between; width:100%;
     max-width:1400px; padding:6px 4px; box-sizing:border-box;
@@ -122,6 +146,9 @@
   #bryneSpeechText{
     margin:0; font-size:12px; line-height:1.45; color:#e8d9a8;
   }
+  #bryneSpeechName{
+    color:#d99a3a; font-weight:bold;
+  }
   #bryneSpeechOk{
     align-self:flex-end;
     background:#2a2620; color:#e8e0cf; border:1px solid #6b5f45;
@@ -187,11 +214,23 @@
     <div id="gameOverText">O Volkarn acordou<br>e dizimou o exército.</div>
     <button id="retryBtn">Tentar de novo</button>
   </div>
+  <div id="scoreOverlay">
+    <div id="scoreBox">
+      <h2>Campanha de Volkarn — Resultado</h2>
+      <div id="scoreTotal">0</div>
+      <div id="scoreBreakdown">
+        <div>Fase 1 — Prender: <span id="scoreP1">0</span></div>
+        <div>Fase 2 — Ferir: <span id="scoreP2">0</span></div>
+        <div>Fase 3 — Traição: <span id="scoreP3">0</span></div>
+      </div>
+      <button id="scoreRestartBtn">Jogar novamente</button>
+    </div>
+  </div>
   <div id="bryneSpeech">
     <div id="bryneSpeechInner">
       <img id="bryneSpeechImg" src="bryne_retrato.png" alt="Bryne">
       <div id="bryneSpeechCol">
-        <p id="bryneSpeechText"></p>
+        <p id="bryneSpeechText"><span id="bryneSpeechName"></span><span id="bryneSpeechMsg"></span></p>
         <button id="bryneSpeechOk">OK</button>
       </div>
     </div>
@@ -477,9 +516,13 @@ function chromaKeyImageData(d, highT, lowT, hueMode){
       const isGreen = (hue >= hueLo && hue <= hueHi) && (sat >= satMin);
       const a = isGreen ? 0 : 255;
       d[i+3] = a;
-      if (a < 250){
+      // despill: mesmo pixels classificados como "personagem" podem ter luz
+      // verde refletida da tela (spill), deixando um tom esverdeado sutil na
+      // pele/roupa perto da silhueta -- limpa isso em qualquer pixel visivel,
+      // nao so nos que foram marcados como fundo.
+      if (a > 0){
         const maxRB = Math.max(r,b);
-        if (g > maxRB) d[i+1] = maxRB;
+        if (g > maxRB + 4){ d[i+1] = maxRB + 4; }
       }
     }
     return;
@@ -1155,6 +1198,12 @@ function startAimState(){
 const PHASE2_HITS_NEEDED = 2;
 let phase2Hits = 0;
 
+// ---------- Pontuacao (0-1000, capturada ao completar cada fase) ----------
+let scorePhase1AttemptsUsed = 0;
+let scorePhase2AttemptsUsed = 0;
+let scorePhase2TimeLeft = 60;
+let scorePhase3AttemptsUsed = 0;
+
 function startPhase2(){
   phase = 2;
   updatePhaseLabel();
@@ -1234,6 +1283,42 @@ function beginPhase3Gameplay(){
   setMsg('FASE 3 — Os Grakh invadem pela esquerda. A catapulta virou contra a própria tropa. Mire nos 3 grupos. Tentativas: 5');
 }
 
+function onPhase3Success(){
+  showArcherSpeech(
+    'Bryne, estamos sendo dizimados! Um Grakh maior que todos os outros... sobrenatural... está varrendo nossos homens. Volkarn está se libertando das correntes!',
+    () => {
+      showBryneSpeech(
+        'Malditos Grakh! Eu lido com o gigante... RECUAR!',
+        () => playFullscreenCutscene('cutscene3.mp4', showScoreScreen)
+      );
+    }
+  );
+}
+
+function showScoreScreen(){
+  const p1 = Math.max(0, 300 - (scorePhase1AttemptsUsed-1)*100);
+  const p2base = Math.max(0, 300 - (scorePhase2AttemptsUsed-2)*75);
+  const p2time = Math.round((scorePhase2TimeLeft/60)*100);
+  const p2 = Math.min(400, p2base + p2time);
+  const p3 = Math.max(0, 300 - (scorePhase3AttemptsUsed-3)*100);
+  const total = Math.min(1000, p1 + p2 + p3);
+
+  document.getElementById('scoreP1').textContent = p1;
+  document.getElementById('scoreP2').textContent = p2;
+  document.getElementById('scoreP3').textContent = p3;
+  document.getElementById('scoreOverlay').classList.add('show');
+
+  const totalEl = document.getElementById('scoreTotal');
+  const startTime = performance.now();
+  const duration = 1500;
+  function tick(now){
+    const t = Math.min(1, (now-startTime)/duration);
+    totalEl.textContent = Math.round(total * t);
+    if (t < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
 let dragonBroken = false;
 
 function triggerGameOver(){
@@ -1261,6 +1346,10 @@ function showGameOverOverlay(text){
 }
 
 function restartGame(){
+  scorePhase1AttemptsUsed = 0;
+  scorePhase2AttemptsUsed = 0;
+  scorePhase2TimeLeft = 60;
+  scorePhase3AttemptsUsed = 0;
   attempts = 3;
   attemptsValEl.textContent = attempts;
   attemptsMaxValEl.textContent = attempts;
@@ -1296,6 +1385,10 @@ function restartGame(){
 }
 
 document.getElementById('retryBtn').addEventListener('click', restartGame);
+document.getElementById('scoreRestartBtn').addEventListener('click', () => {
+  document.getElementById('scoreOverlay').classList.remove('show');
+  restartGame();
+});
 document.getElementById('introBtn').addEventListener('click', () => {
   const el = document.getElementById('introOverlay');
   el.style.opacity = '0';
@@ -1305,10 +1398,11 @@ document.getElementById('introBtn').addEventListener('click', () => {
   bgMusic.play().catch(() => {});
 });
 
-function showCharacterSpeech(imgSrc, text, onClose, anchorX, anchorY){
+function showCharacterSpeech(imgSrc, speakerName, text, onClose, anchorX, anchorY){
   const bubble = document.getElementById('bryneSpeech');
   document.getElementById('bryneSpeechImg').src = imgSrc;
-  document.getElementById('bryneSpeechText').textContent = text;
+  document.getElementById('bryneSpeechName').textContent = speakerName + ': ';
+  document.getElementById('bryneSpeechMsg').textContent = text;
   const ax = (anchorX !== undefined) ? anchorX : BRYNE_POS_PHASE1_2.x;
   const ay = (anchorY !== undefined) ? anchorY : (BRYNE_POS_PHASE1_2.y - BRYNE_POS_PHASE1_2.h - 20);
   bubble.style.left = (ax / W * 100) + '%';
@@ -1328,12 +1422,17 @@ function showCharacterSpeech(imgSrc, text, onClose, anchorX, anchorY){
 }
 
 function showBryneSpeech(text, onClose, anchorX, anchorY){
-  showCharacterSpeech('bryne_retrato.png', text, onClose, anchorX, anchorY);
+  showCharacterSpeech('bryne_retrato.png', 'Bryne', text, onClose, anchorX, anchorY);
 }
 
 const TAMEL_POS = { x: 1330, y: 540 }; // ele nao aparece renderizado em cena -- ancora fixa perto da catapulta
 function showTamelSpeech(text, onClose){
-  showCharacterSpeech('tamel_retrato.png', 'Comandante Tamel: ' + text, onClose, TAMEL_POS.x, TAMEL_POS.y);
+  showCharacterSpeech('tamel_retrato.png', 'Comandante Tamel', text, onClose, TAMEL_POS.x, TAMEL_POS.y);
+}
+
+const ARCHER_SPEECH_POS = { x: 700, y: 500 }; // tambem nao renderizado -- ancora fixa, meio da planicie
+function showArcherSpeech(text, onClose){
+  showCharacterSpeech('arqueiro_retrato.png', 'Arqueiro', text, onClose, ARCHER_SPEECH_POS.x, ARCHER_SPEECH_POS.y);
 }
 
 let audioUnlocked = false;
@@ -1417,7 +1516,8 @@ function onPovDone(){
     }
     const allHit = PHASE3_TARGETS.every(z => z.hit);
     if (allHit){
-      triggerPhase3Ending(true);
+      scorePhase3AttemptsUsed = 5 - attempts;
+      onPhase3Success();
       return;
     }
     if (attempts <= 0){
@@ -1435,6 +1535,7 @@ function onPovDone(){
   if (lastShotWasHit){
     if (phase === 1){
       state = 'phase_complete';
+      scorePhase1AttemptsUsed = 3 - attempts + 1;
       // corta na hora pro visual da fase 2 (dragao ja aparece preso, maquina
       // ja troca) -- sem periodo de "ainda dormindo" enquanto uma mensagem
       // generica passava.
@@ -1455,6 +1556,8 @@ function onPovDone(){
       phase2Hits++;
       if (phase2Hits >= PHASE2_HITS_NEEDED){
         state = 'phase_complete';
+        scorePhase2AttemptsUsed = 4 - attempts + 1;
+        scorePhase2TimeLeft = phase2TimeLeft;
         stopPhase2Timer();
         onPhase2Complete();
         return;
