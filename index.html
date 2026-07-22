@@ -327,6 +327,7 @@ const grakhAtkPool = makeLoopPool('grakh_atacando.mp4', 0,0,1091,720, 100, 4);
 // agressivo so nele, sem arriscar mudar os outros que ja estao bons.
 grakhAtkPool.forEach(t => { t.highT = 26; t.lowT = 15; });
 const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 100, 1)[0];
+const bryneWalkType = makeLoopPool('bryne_andando.mp4', 139,135,520,1086, 90, 1)[0];
 
 // ---------- Processamento em rodizio das animacoes ambiente ----------
 // Em vez de reprocessar todos os ~28 videos de uma vez a cada 2 frames (o que
@@ -419,6 +420,7 @@ function applyPhaseVideoPlayback(){
   setPoolPlaying(archerPool, true);
   setPoolPlaying(archerWalkPool, true);
   setPoolPlaying(bryneType, true);
+  setPoolPlaying(bryneWalkType, true);
 
   // so usados na fase 3 (corpo a corpo com os Grakh)
   setPoolPlaying(soldierAtkPool, phase === 3);
@@ -676,7 +678,34 @@ function updateGrakh(now, dt){
 
 let BRYNE_POS = { x: 780, y: 615, h: 48 };
 const BRYNE_POS_PHASE1_2 = { x: 780, y: 615, h: 48 };
+const BRYNE_POS_PHASE2_ADVANCED = { x: 930, y: 612, h: 48 }; // pra onde ela avanca ao iniciar a fase 2 de verdade
 const BRYNE_POS_PHASE3 = { x: 1500, y: 600, h: 48 }; // bem perto do dragao acorrentado, olhando pra ele
+const BRYNE_WALK_SPEED = 95; // px/s
+let bryneWalking = false;
+let bryneWalkTarget = null;
+
+function startBryneAdvance(target){
+  bryneWalking = true;
+  bryneWalkTarget = target;
+}
+
+function updateBryneAdvance(dt){
+  if (!bryneWalking) return;
+  const dx = bryneWalkTarget.x - BRYNE_POS.x;
+  const dy = bryneWalkTarget.y - BRYNE_POS.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 4){
+    BRYNE_POS = { x: bryneWalkTarget.x, y: bryneWalkTarget.y, h: bryneWalkTarget.h };
+    bryneWalking = false;
+    bryneWalkTarget = null;
+  } else {
+    BRYNE_POS = {
+      x: BRYNE_POS.x + (dx/dist)*BRYNE_WALK_SPEED*dt,
+      y: BRYNE_POS.y + (dy/dist)*BRYNE_WALK_SPEED*dt,
+      h: BRYNE_POS.h,
+    };
+  }
+}
 // pequena escolta parada ao lado do Bryne na fase 3 (so decorativa, nao entra no sistema de Grakh)
 const BRYNE_GUARD_PHASE3 = [
   { x: 1440, y: 606, h: 46, flip: true },
@@ -925,7 +954,12 @@ function renderStatic(){
     }
   }
   for (const g of grakhUnits){ stamp(g.currentItem, g.x, g.y, GRAKH_H, g.flip); }
-  stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
+  if (bryneWalking){
+    keyType(bryneWalkType);
+    stamp(bryneWalkType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, bryneWalkTarget.x > BRYNE_POS.x);
+  } else {
+    stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
+  }
   if (phase === 3){
     for (const s of BRYNE_GUARD_PHASE3){ stamp(soldierPool[0], s.x, s.y, s.h, s.flip); }
   }
@@ -991,6 +1025,7 @@ function loop(){
   __lastFrameT = now;
   updateCrowd(now, dt);
   updateTroopAdvance(dt);
+  updateBryneAdvance(dt);
   updatePhase2Target(now);
   updatePhase2Timer(dt);
   updateGrakh(now, dt);
@@ -1081,20 +1116,25 @@ function startAimState(){
   setMsg('Mire o ângulo, segure o botão pra carregar força, e solte pra disparar. Tentativas restantes: ' + attempts);
 }
 
+const PHASE2_HITS_NEEDED = 2;
+let phase2Hits = 0;
+
 function startPhase2(){
   phase = 2;
   updatePhaseLabel();
   applyPhaseVideoPlayback();
-  attempts = 3; // presumindo o mesmo numero de tentativas da fase 1 -- ajustavel
+  attempts = 4; // precisa de 2 acertos dentro dessas 4 tentativas
+  phase2Hits = 0;
   attemptsValEl.textContent = attempts;
   attemptsMaxValEl.textContent = attempts;
   TARGET_ZONE.r = 38; // alvo menor -- mais dificil de acertar
   TARGET_ZONE.x = (PHASE2_TARGET_AREA.x0 + PHASE2_TARGET_AREA.x1)/2;
   TARGET_ZONE.y = (PHASE2_TARGET_AREA.y0 + PHASE2_TARGET_AREA.y1)/2;
   advanceTroopsPhase2();
+  startBryneAdvance(BRYNE_POS_PHASE2_ADVANCED);
   startAimState();
   startPhase2Timer();
-  setMsg('FASE 2 — Ataque nas fendas entre as escamas. O alvo se move; ele congela assim que você começar a carregar força. Tentativas: ' + attempts);
+  setMsg(`FASE 2 — Ataque nas fendas entre as escamas. Precisa acertar ${PHASE2_HITS_NEEDED} de ${attempts} tentativas. O alvo se move; ele congela assim que você começar a carregar força.`);
 }
 
 function startPhase3(){
@@ -1151,6 +1191,9 @@ function restartGame(){
   phase = 1;
   updatePhaseLabel();
   BRYNE_POS = BRYNE_POS_PHASE1_2;
+  bryneWalking = false;
+  bryneWalkTarget = null;
+  phase2Hits = 0;
   dragonAwake = false;
   dragonBroken = false;
   dragonWakeType.video.pause();
@@ -1186,9 +1229,13 @@ document.getElementById('introBtn').addEventListener('click', () => {
   bgMusic.play().catch(() => {});
 });
 
-function showBryneSpeech(text, onClose){
+function showBryneSpeech(text, onClose, anchorX, anchorY){
   const bubble = document.getElementById('bryneSpeech');
   document.getElementById('bryneSpeechText').textContent = text;
+  const ax = (anchorX !== undefined) ? anchorX : BRYNE_POS_PHASE1_2.x;
+  const ay = (anchorY !== undefined) ? anchorY : (BRYNE_POS_PHASE1_2.y - BRYNE_POS_PHASE1_2.h - 20);
+  bubble.style.left = (ax / W * 100) + '%';
+  bubble.style.bottom = ((H - ay) / H * 100) + '%';
   bubble.classList.add('show');
   let closed = false;
   clearTimeout(bubble._autoTimer);
@@ -1300,8 +1347,8 @@ function onPovDone(){
   }
 
   if (lastShotWasHit){
-    state = 'phase_complete';
     if (phase === 1){
+      state = 'phase_complete';
       // corta na hora pro visual da fase 2 (dragao ja aparece preso, maquina
       // ja troca) -- sem periodo de "ainda dormindo" enquanto uma mensagem
       // generica passava.
@@ -1315,13 +1362,33 @@ function onPovDone(){
           startPhase2
         );
       }, 700);
-    } else {
-      setMsg('ACERTOU! Preparando Fase 3...');
-      setPoolPlaying(machine3Type, true);
-      setPoolPlaying(dragonStruggleType, true);
-      setTimeout(startPhase3, 2400);
+      return;
     }
-    return;
+
+    if (phase === 2){
+      phase2Hits++;
+      if (phase2Hits >= PHASE2_HITS_NEEDED){
+        state = 'phase_complete';
+        stopPhase2Timer();
+        setMsg('ACERTOU! Preparando Fase 3...');
+        setPoolPlaying(machine3Type, true);
+        setPoolPlaying(dragonStruggleType, true);
+        setTimeout(startPhase3, 2400);
+        return;
+      }
+      // 1o acerto, ainda falta outro: cronometro trava, fala do Bryne sobe
+      // na posicao ATUAL dela (ja avancada, se for o caso).
+      state = 'result';
+      phase2TimerActive = false;
+      showBryneSpeech(
+        'O Dragão está sangrando. Vamos conseguir, continuem!',
+        () => { phase2TimerActive = true; startAimState(); },
+        BRYNE_POS.x, BRYNE_POS.y - BRYNE_POS.h - 20
+      );
+      return;
+    }
+
+    // fase 3 nunca chega aqui (ja tratada e retornada no topo da funcao)
   }
 
   attempts -= 1;
@@ -1333,7 +1400,12 @@ function onPovDone(){
     triggerGameOver();
     return;
   }
-  setMsg('Errou. Restam ' + attempts + ' tentativa(s). Ajuste ângulo/força e tente de novo.');
+  if (phase === 2){
+    const needed = PHASE2_HITS_NEEDED - phase2Hits;
+    setMsg(`Errou. Restam ${attempts} tentativa(s) — ainda precisa de ${needed} acerto(s).`);
+  } else {
+    setMsg('Errou. Restam ' + attempts + ' tentativa(s). Ajuste ângulo/força e tente de novo.');
+  }
   setTimeout(startAimState, 900);
 }
 
