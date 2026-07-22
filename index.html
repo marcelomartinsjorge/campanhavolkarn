@@ -62,12 +62,19 @@
     font-size:14px; line-height:1.7; color:#c9bb96; font-style:italic;
     max-width:520px; margin:0 auto 24px;
   }
-  #scoreRestartBtn{
+  #scoreButtons{ display:flex; gap:14px; justify-content:center; }
+  #scoreRestartBtn, #scoreContinueBtn{
     font-size:16px; padding:12px 28px;
-    background:#2a2620; color:#e8e0cf; border:1px solid #6b5f45;
     border-radius:3px; cursor:pointer; font-family:Georgia, serif;
   }
+  #scoreRestartBtn{
+    background:#2a2620; color:#e8e0cf; border:1px solid #6b5f45;
+  }
   #scoreRestartBtn:hover{ background:#3a3428; }
+  #scoreContinueBtn{
+    background:#5a3a1e; color:#f0e2b6; border:1px solid #d99a3a; font-weight:bold;
+  }
+  #scoreContinueBtn:hover{ background:#6a4426; }
   #topbar{
     display:flex; justify-content:space-between; width:100%;
     max-width:1400px; padding:6px 4px; box-sizing:border-box;
@@ -230,7 +237,10 @@
       <p id="scoreSummary">O véu, a traição de Tamel e a emboscada dos Grakh dizimaram o exército de Redom.<br>
       Bryne retorna viva, partiu com cem mil homens e retorna com menos de mil.<br>
       Ela jura vingança... contra os Grakh.</p>
-      <button id="scoreRestartBtn">Jogar novamente</button>
+      <div id="scoreButtons">
+        <button id="scoreRestartBtn">Jogar novamente</button>
+        <button id="scoreContinueBtn">Continuar história</button>
+      </div>
     </div>
   </div>
   <div id="bryneSpeech">
@@ -1399,6 +1409,9 @@ document.getElementById('retryBtn').addEventListener('click', restartGame);
 document.getElementById('scoreRestartBtn').addEventListener('click', () => {
   document.getElementById('scoreOverlay').classList.remove('show');
   restartGame();
+});
+document.getElementById('scoreContinueBtn').addEventListener('click', () => {
+  window.location.href = 'https://marcelomartinsjorge.github.io/batalhabocaseca/';
 });
 document.getElementById('introBtn').addEventListener('click', () => {
   const el = document.getElementById('introOverlay');
