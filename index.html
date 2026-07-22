@@ -1173,23 +1173,63 @@ function startPhase2(){
   setMsg(`FASE 2 — Ataque nas fendas entre as escamas. Precisa acertar ${PHASE2_HITS_NEEDED} de ${attempts} tentativas. O alvo se move; ele congela assim que você começar a carregar força.`);
 }
 
-function startPhase3(){
+function onPhase2Complete(){
+  showBryneSpeech(
+    'É isso! Volkarn está cedendo. Esse é o momento, homens! Atrás de mim, vamos escalá-lo e fazer mil feridas com nossas espadas.',
+    () => playFullscreenCutscene('cutscene2.mp4', afterCutscene2)
+  );
+}
+
+function afterCutscene2(){
+  // a escalada foi coberta pela cutscene -- corta direto pros visuais da fase 3
   phase = 3;
   updatePhaseLabel();
   applyPhaseVideoPlayback();
-  stopPhase2Timer();
   BRYNE_POS = BRYNE_POS_PHASE3;
-  attempts = 5;
-  attemptsValEl.textContent = attempts;
-  attemptsMaxValEl.textContent = attempts;
-  for (const z of PHASE3_TARGETS){ z.hit = false; }
-  // reinicia o sistema de Grakh (util tambem se o jogador reiniciar o jogo depois)
+  showBryneSpeech(
+    'O que?! O véu está repelindo os ataques. Recuar!',
+    afterVeilSpeech,
+    BRYNE_POS.x, BRYNE_POS.y - BRYNE_POS.h - 20
+  );
+}
+
+function afterVeilSpeech(){
+  new Audio('grakh_entrando.mp3').play().catch(() => {});
+  // reinicia o sistema de Grakh e ja deixa entrando -- simultaneo a fala seguinte
   grakhUnits.length = 0;
   grakhSpawnedCount = 0;
   grakhGroupCursor = 0;
   clusterSlotCounters[0]=0; clusterSlotCounters[1]=0; clusterSlotCounters[2]=0;
-  grakhNextSpawnAt = performance.now() + 700;
   for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
+  grakhNextSpawnAt = performance.now() + 300;
+  showBryneSpeech(
+    'Grakhs!! Grakhs na retaguarda, esqueçam Volkarn. Ataquem os Grakh.',
+    afterGrakhSpeech,
+    BRYNE_POS.x, BRYNE_POS.y - BRYNE_POS.h - 20
+  );
+}
+
+function afterGrakhSpeech(){
+  showTamelSpeech('Preparar catapultas.', afterTamel1);
+}
+
+function afterTamel1(){
+  showBryneSpeech(
+    'Não, Tamel! Vocês vão acertar nossos homens, apenas recue.',
+    afterBryneRecue,
+    BRYNE_POS.x, BRYNE_POS.y - BRYNE_POS.h - 20
+  );
+}
+
+function afterBryneRecue(){
+  showTamelSpeech('Hahaha', beginPhase3Gameplay);
+}
+
+function beginPhase3Gameplay(){
+  attempts = 5;
+  attemptsValEl.textContent = attempts;
+  attemptsMaxValEl.textContent = attempts;
+  for (const z of PHASE3_TARGETS){ z.hit = false; }
   startAimState();
   setMsg('FASE 3 — Os Grakh invadem pela esquerda. A catapulta virou contra a própria tropa. Mire nos 3 grupos. Tentativas: 5');
 }
@@ -1265,8 +1305,9 @@ document.getElementById('introBtn').addEventListener('click', () => {
   bgMusic.play().catch(() => {});
 });
 
-function showBryneSpeech(text, onClose, anchorX, anchorY){
+function showCharacterSpeech(imgSrc, text, onClose, anchorX, anchorY){
   const bubble = document.getElementById('bryneSpeech');
+  document.getElementById('bryneSpeechImg').src = imgSrc;
   document.getElementById('bryneSpeechText').textContent = text;
   const ax = (anchorX !== undefined) ? anchorX : BRYNE_POS_PHASE1_2.x;
   const ay = (anchorY !== undefined) ? anchorY : (BRYNE_POS_PHASE1_2.y - BRYNE_POS_PHASE1_2.h - 20);
@@ -1284,6 +1325,15 @@ function showBryneSpeech(text, onClose, anchorX, anchorY){
   bubble.onclick = doClose;
   document.getElementById('bryneSpeechOk').onclick = (e) => { e.stopPropagation(); doClose(); };
   bubble._autoTimer = setTimeout(doClose, 9000); // some sozinha se ninguem clicar antes
+}
+
+function showBryneSpeech(text, onClose, anchorX, anchorY){
+  showCharacterSpeech('bryne_retrato.png', text, onClose, anchorX, anchorY);
+}
+
+const TAMEL_POS = { x: 1330, y: 540 }; // ele nao aparece renderizado em cena -- ancora fixa perto da catapulta
+function showTamelSpeech(text, onClose){
+  showCharacterSpeech('tamel_retrato.png', 'Comandante Tamel: ' + text, onClose, TAMEL_POS.x, TAMEL_POS.y);
 }
 
 let audioUnlocked = false;
@@ -1406,10 +1456,7 @@ function onPovDone(){
       if (phase2Hits >= PHASE2_HITS_NEEDED){
         state = 'phase_complete';
         stopPhase2Timer();
-        setMsg('ACERTOU! Preparando Fase 3...');
-        setPoolPlaying(machine3Type, true);
-        setPoolPlaying(dragonStruggleType, true);
-        setTimeout(startPhase3, 2400);
+        onPhase2Complete();
         return;
       }
       // 1o acerto, ainda falta outro: cronometro trava, fala do Bryne sobe
@@ -1497,6 +1544,29 @@ let cutsceneActive = true; // fica true durante cutscene + tutorial; vira false 
 
 function showIntroOverlay(){
   document.getElementById('introOverlay').style.display = 'flex';
+}
+
+function playFullscreenCutscene(src, onDone){
+  const overlay = document.getElementById('cutsceneOverlay');
+  const video = document.getElementById('cutsceneVideo');
+  const skipHint = document.getElementById('cutsceneSkipHint');
+  document.getElementById('cutsceneStartBtn').style.display = 'none';
+  video.src = src;
+  overlay.style.display = 'flex';
+  skipHint.classList.add('show');
+
+  function finish(){
+    video.pause();
+    overlay.style.display = 'none';
+    skipHint.classList.remove('show');
+    document.removeEventListener('keydown', onKeyDown);
+    onDone();
+  }
+  function onKeyDown(e){ if (e.key === 'Escape'){ finish(); } }
+  document.addEventListener('keydown', onKeyDown);
+  video.currentTime = 0;
+  video.play().catch(() => finish()); // se o play falhar, nao trava o jogador
+  pollVideoEnd(video, finish);
 }
 
 function initOpening(){
