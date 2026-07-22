@@ -73,7 +73,8 @@
   #msg{
     min-height:22px; font-size:15px; color:#e8d9a8; letter-spacing:0.3px;
   }
-  #angleVal, #windVal, #attemptsVal{ font-weight:bold; color:#e8d9a8; }
+  #angleVal, #windVal, #attemptsVal, #timerVal{ font-weight:bold; color:#e8d9a8; }
+  #timerVal.urgent{ color:#ff6b5a; }
   .footNote{ font-size:11px; color:#777; max-width:1400px; padding:0 6px 14px; }
   #introOverlay{
     position:fixed; top:0; left:0; width:100%; height:100%;
@@ -117,9 +118,17 @@
     object-fit:cover; object-position:58% 25%;
     border-radius:3px; border:1px solid #8a7a55;
   }
+  #bryneSpeechCol{ display:flex; flex-direction:column; gap:8px; }
   #bryneSpeechText{
     margin:0; font-size:12px; line-height:1.45; color:#e8d9a8;
   }
+  #bryneSpeechOk{
+    align-self:flex-end;
+    background:#2a2620; color:#e8e0cf; border:1px solid #6b5f45;
+    padding:4px 16px; border-radius:3px; cursor:pointer;
+    font-family:Georgia, serif; font-size:12px;
+  }
+  #bryneSpeechOk:hover{ background:#3a3428; }
   #bryneSpeechTail{
     position:absolute; left:50%; bottom:-13px; transform:translateX(-50%);
     width:0; height:0;
@@ -181,7 +190,10 @@
   <div id="bryneSpeech">
     <div id="bryneSpeechInner">
       <img id="bryneSpeechImg" src="bryne_retrato.png" alt="Bryne">
-      <p id="bryneSpeechText">Atenção, soldados! O primeiro passo é prender o Dragão. Vamos aproveitar sua passividade para pegá-lo de surpresa. Respirem fundo e mirem com calma, quero que ele entenda que somos uma ameaça somente após estar acorrentado.</p>
+      <div id="bryneSpeechCol">
+        <p id="bryneSpeechText"></p>
+        <button id="bryneSpeechOk">OK</button>
+      </div>
     </div>
     <div id="bryneSpeechTail"></div>
   </div>
@@ -222,6 +234,10 @@
 
   <div class="ctrlGroup">
     <span>Tentativas: <span id="attemptsVal">3</span>/<span id="attemptsMaxVal">3</span></span>
+  </div>
+
+  <div class="ctrlGroup" id="timerGroup" style="display:none;">
+    <span>Tempo: <span id="timerVal">1:00</span></span>
   </div>
 </div>
 
@@ -510,6 +526,7 @@ const crowd = [];
       const chosen = idlePool[Math.floor(rnd()*idlePool.length)];
       crowd.push({
         isArcher, x, y, h, flip,
+        homeX: x, homeY: y, // guarda a posicao original, usada pra resetar apos avancar (fase 2)
         idlePool,
         walkPool: isArcher ? archerWalkPool : soldierWalkPool,
         currentItem: chosen,
@@ -524,6 +541,7 @@ const crowd = [];
 function updateCrowd(now, dt){
   for (const u of crowd){
     if (u.inMelee) continue; // travado no combate -- nao vaga enquanto luta
+    if (u.advancing || u.advanced) continue; // marchando ou ja postado ao lado do Bryne
     if (!u.walkPool) continue; // seguranca: so anda quem tem pool de andar definido
     if (now >= u.nextChange){
       if (u.walking){
@@ -544,6 +562,44 @@ function updateCrowd(now, dt){
         u.dir *= -1;
         u.flip = u.dir === -1;
       }
+    }
+  }
+}
+
+// ---------- Fase 2: alguns soldados avancam junto com o Bryne ----------
+const PHASE2_ADVANCE_TARGETS = [
+  { x: 900, y: 610 }, { x: 940, y: 600 }, { x: 870, y: 620 },
+  { x: 920, y: 595 }, { x: 860, y: 605 },
+];
+const ADVANCE_SPEED = 95; // px/s -- marcha, mais rapido que o vagar ambiente
+
+function advanceTroopsPhase2(){
+  const candidates = crowd.filter(u => !u.isArcher && !u.inMelee && !u.advancing && !u.advanced);
+  const n = Math.min(PHASE2_ADVANCE_TARGETS.length, candidates.length);
+  for (let i=0; i<n; i++){
+    const u = candidates[i];
+    u.advancing = true;
+    u.walking = false;
+    u.advanceTarget = PHASE2_ADVANCE_TARGETS[i];
+  }
+}
+
+function updateTroopAdvance(dt){
+  for (const u of crowd){
+    if (!u.advancing) continue;
+    const dx = u.advanceTarget.x - u.x;
+    const dy = u.advanceTarget.y - u.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 4){
+      u.x = u.advanceTarget.x; u.y = u.advanceTarget.y;
+      u.advancing = false;
+      u.advanced = true;
+      u.currentItem = u.idlePool[0]; // fica parado, postado, na nova posicao
+    } else {
+      u.flip = dx < 0;
+      u.currentItem = (u.isArcher ? archerWalkPool : soldierWalkPool)[0];
+      u.x += (dx/dist) * ADVANCE_SPEED * dt;
+      u.y += (dy/dist) * ADVANCE_SPEED * dt;
     }
   }
 }
@@ -656,6 +712,49 @@ let lastShotWasHit = false;
 let dragonReactionUntil = 0;
 let phase = 1;
 const PHASE2_TARGET_AREA = { x0: 1520, y0: 290, x1: 1780, y1: 410 };
+
+// ---------- Cronometro da Fase 2 (60s, pausa durante disparo/POV) ----------
+let phase2TimerActive = false;
+let phase2TimeLeft = 60;
+const timerGroupEl = document.getElementById('timerGroup');
+const timerValEl = document.getElementById('timerVal');
+
+function formatTime(t){
+  const s = Math.max(0, Math.ceil(t));
+  const m = Math.floor(s/60);
+  const r = s % 60;
+  return m + ':' + (r < 10 ? '0' : '') + r;
+}
+
+function startPhase2Timer(){
+  phase2TimeLeft = 60;
+  phase2TimerActive = true;
+  timerGroupEl.style.display = 'inline-block';
+  timerValEl.textContent = formatTime(phase2TimeLeft);
+  timerValEl.classList.remove('urgent');
+}
+
+function stopPhase2Timer(){
+  phase2TimerActive = false;
+  timerGroupEl.style.display = 'none';
+}
+
+function updatePhase2Timer(dt){
+  if (!phase2TimerActive || phase !== 2) return;
+  // o tempo so passa enquanto o jogador esta de fato decidindo o proximo tiro;
+  // fica parado durante o disparo/POV, que estao fora do controle dele.
+  if (state === 'firing_inplace' || state === 'pov') return;
+  phase2TimeLeft -= dt;
+  if (phase2TimeLeft <= 10) timerValEl.classList.add('urgent');
+  if (phase2TimeLeft <= 0){
+    phase2TimeLeft = 0;
+    phase2TimerActive = false;
+    timerValEl.textContent = '0:00';
+    triggerGameOver(); // tempo esgotado -- mesma consequencia de zerar as tentativas
+    return;
+  }
+  timerValEl.textContent = formatTime(phase2TimeLeft);
+}
 const phase2MoveSeed = Math.random()*1000;
 function updatePhase2Target(now){
   // o alvo so se move durante a mira (state 'aim'); qualquer outro estado
@@ -891,7 +990,9 @@ function loop(){
   const dt = Math.min(0.1, (now - __lastFrameT)/1000);
   __lastFrameT = now;
   updateCrowd(now, dt);
+  updateTroopAdvance(dt);
   updatePhase2Target(now);
+  updatePhase2Timer(dt);
   updateGrakh(now, dt);
   updateCharge();
   updateMusic();
@@ -990,7 +1091,9 @@ function startPhase2(){
   TARGET_ZONE.r = 38; // alvo menor -- mais dificil de acertar
   TARGET_ZONE.x = (PHASE2_TARGET_AREA.x0 + PHASE2_TARGET_AREA.x1)/2;
   TARGET_ZONE.y = (PHASE2_TARGET_AREA.y0 + PHASE2_TARGET_AREA.y1)/2;
+  advanceTroopsPhase2();
   startAimState();
+  startPhase2Timer();
   setMsg('FASE 2 — Ataque nas fendas entre as escamas. O alvo se move; ele congela assim que você começar a carregar força. Tentativas: ' + attempts);
 }
 
@@ -998,6 +1101,7 @@ function startPhase3(){
   phase = 3;
   updatePhaseLabel();
   applyPhaseVideoPlayback();
+  stopPhase2Timer();
   BRYNE_POS = BRYNE_POS_PHASE3;
   attempts = 5;
   attemptsValEl.textContent = attempts;
@@ -1058,27 +1162,45 @@ function restartGame(){
   grakhGroupCursor = 0;
   clusterSlotCounters[0]=0; clusterSlotCounters[1]=0; clusterSlotCounters[2]=0;
   for (const z of PHASE3_TARGETS){ z.hit = false; }
-  for (const u of crowd){ u.inMelee = false; u.reservedForGrakh = false; }
+  for (const u of crowd){
+    u.inMelee = false;
+    u.reservedForGrakh = false;
+    if (u.advancing || u.advanced){
+      u.x = u.homeX; u.y = u.homeY;
+      u.advancing = false; u.advanced = false;
+    }
+  }
+  stopPhase2Timer();
   applyPhaseVideoPlayback();
   document.getElementById('gameOverOverlay').classList.remove('show');
   startAimState();
 }
+
 document.getElementById('retryBtn').addEventListener('click', restartGame);
 document.getElementById('introBtn').addEventListener('click', () => {
   const el = document.getElementById('introOverlay');
   el.style.opacity = '0';
   setTimeout(() => { el.style.display = 'none'; }, 500);
-  showBryneSpeech();
+  showBryneSpeech('Atenção, soldados! O primeiro passo é prender o Dragão. Vamos aproveitar sua passividade para pegá-lo de surpresa. Respirem fundo e mirem com calma, quero que ele entenda que somos uma ameaça somente após estar acorrentado.');
   cutsceneActive = false;
   bgMusic.play().catch(() => {});
 });
 
-function showBryneSpeech(){
+function showBryneSpeech(text, onClose){
   const bubble = document.getElementById('bryneSpeech');
+  document.getElementById('bryneSpeechText').textContent = text;
   bubble.classList.add('show');
-  const hide = () => bubble.classList.remove('show');
-  bubble.addEventListener('click', hide, { once: true });
-  setTimeout(hide, 9000); // some sozinha se ninguem clicar antes
+  let closed = false;
+  clearTimeout(bubble._autoTimer);
+  function doClose(){
+    if (closed) return;
+    closed = true;
+    bubble.classList.remove('show');
+    if (onClose) onClose();
+  }
+  bubble.onclick = doClose;
+  document.getElementById('bryneSpeechOk').onclick = (e) => { e.stopPropagation(); doClose(); };
+  bubble._autoTimer = setTimeout(doClose, 9000); // some sozinha se ninguem clicar antes
 }
 
 let audioUnlocked = false;
@@ -1180,12 +1302,19 @@ function onPovDone(){
   if (lastShotWasHit){
     state = 'phase_complete';
     if (phase === 1){
-      setMsg('ACERTOU! A corrente prendeu firme no Volkarn. Preparando Fase 2...');
-      // pre-aquece os videos da fase 2 durante a mensagem de transicao, pra nao
-      // aparecerem "travados" no primeiro instante em que a cena troca.
-      setPoolPlaying(machine2Type, true);
-      setPoolPlaying(dragonChainedType, true);
-      setTimeout(startPhase2, 2400);
+      // corta na hora pro visual da fase 2 (dragao ja aparece preso, maquina
+      // ja troca) -- sem periodo de "ainda dormindo" enquanto uma mensagem
+      // generica passava.
+      phase = 2;
+      updatePhaseLabel();
+      applyPhaseVideoPlayback();
+      setMsg('A corrente prendeu firme no Volkarn!');
+      setTimeout(() => {
+        showBryneSpeech(
+          'Soldados, Volkarn está preso! Vamos feri-lo com tudo que temos antes que ele se solte e consiga revidar. Preparem as armas de Vant-Côvado. É agora ou nunca.',
+          startPhase2
+        );
+      }, 700);
     } else {
       setMsg('ACERTOU! Preparando Fase 3...');
       setPoolPlaying(machine3Type, true);
