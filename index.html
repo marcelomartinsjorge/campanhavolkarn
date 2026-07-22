@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>As Quatro Vontades — Fase 1: Prender Volkarn</title>
+<title>As Quatro Vontades — A Campanha de Volkarn</title>
 <style>
   html,body{
     margin:0; padding:0; background:#0a0a0c; color:#eee;
@@ -202,7 +202,7 @@
 
 <div id="topbar">
   <div>AS QUATRO VONTADES — <em>A Queda das Raízes</em></div>
-  <div id="phaseLabel">Fase 1 · Prender Volkarn — teste jogável v0</div>
+  <div id="phaseLabel">Fase 1 · Prender Volkarn</div>
 </div>
 
 <div id="wrap">
@@ -290,9 +290,7 @@
 <div id="msg">Mire o ângulo, segure o botão pra carregar força, e solte pra disparar.</div>
 
 <p class="footNote">
-  Protótipo v0 — física de arco/vento com valores provisórios pra teste de sensação.
-  Alvo: âncora no pescoço/ombro do Volkarn. 3 tentativas — errando as 3, ele acorda (game over).
-  Sirva este arquivo por um servidor local (não abra como file:// direto) pra evitar bloqueio de leitura de vídeo pelo navegador.
+  Sirva este arquivo por um servidor local (não abra como file:// direto) para evitar bloqueio de leitura de vídeo pelo navegador.
 </p>
 
 <script>
@@ -377,6 +375,7 @@ const grakhAtkPool = makeLoopPool('grakh_atacando.mp4', 0,0,1709,1080, 100, 4);
 const GRAKH_HUE_MODE = { hueLo: 85, hueHi: 175, satMin: 30 };
 grakhRunPool.forEach(t => { t.hueMode = GRAKH_HUE_MODE; });
 grakhAtkPool.forEach(t => { t.hueMode = GRAKH_HUE_MODE; });
+soldierAtkPool.forEach(t => { t.hueMode = GRAKH_HUE_MODE; });
 const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 100, 1)[0];
 const bryneWalkType = makeLoopPool('bryne_andando.mp4', 139,135,520,1086, 90, 1)[0];
 
@@ -754,7 +753,7 @@ function updateGrakh(now, dt){
         g.targetUnit.y = g.targetUnit.clusterY;
         g.targetUnit.inMelee = true;
         g.targetUnit.meleeItem = soldierAtkPool[Math.floor(Math.random()*soldierAtkPool.length)];
-        g.targetUnit.meleeFlip = true; // soldado vira de frente para o Grakh, que vem da esquerda
+        g.targetUnit.meleeFlip = false; // soldado vira de frente para o Grakh, que vem da esquerda
       } else {
         g.x += Math.sign(dx) * GRAKH_RUN_SPEED * dt;
       }
@@ -1189,7 +1188,7 @@ function updatePhaseLabel(){
     2: 'Fase 2 · Ferir Volkarn',
     3: 'Fase 3 · A Traição de Tamel',
   };
-  document.getElementById('phaseLabel').textContent = labels[phase] + ' — teste jogável v0';
+  document.getElementById('phaseLabel').textContent = labels[phase];
 }
 
 function startAimState(){
@@ -1503,7 +1502,6 @@ function fireShot(){
 
 function onFiringAnimDone(){
   state = 'pov';
-  // fase 3 ainda nao tem POV proprio -- reaproveita os da fase 2 como placeholder
   const hitVideo = phase === 1 ? povVideoHit : (phase === 2 ? povVideoHit2 : povVideoHit3);
   const missVideo = phase === 1 ? povVideoMiss : (phase === 2 ? povVideoMiss2 : povVideoMiss3);
   activePovVideo = lastShotWasHit ? hitVideo : missVideo;
@@ -1533,7 +1531,7 @@ function onPovDone(){
       return;
     }
     if (attempts <= 0){
-      triggerPhase3Ending(false);
+      triggerPhase3Ending();
       return;
     }
     const remaining = PHASE3_TARGETS.filter(z => !z.hit).length;
@@ -1607,16 +1605,14 @@ function onPovDone(){
   setTimeout(startAimState, 900);
 }
 
-function triggerPhase3Ending(success){
+function triggerPhase3Ending(){
   state = 'gameover';
   dragonBroken = true;
   setPoolPlaying(dragonStruggleType, false);
   dragonBreakType.video.currentTime = 0;
   dragonBreakType.video.play().catch(()=>{});
   setMsg('O Volkarn se solta das correntes...');
-  const text = success
-    ? 'A ordem de Tamel se cumpre.<br>As pedras caem sobre a própria retaguarda —<br>não há mais tempo para deter o que foi feito.<br>No caos, as correntes de Volkarn cedem.'
-    : 'Tamel luta contra o próprio corpo,<br>mas a possessão já tomou os braços da tropa.<br>O cerco desmorona — e as correntes de Volkarn cedem de qualquer forma.';
+  const text = 'Tamel luta contra o próprio corpo,<br>mas a possessão já tomou os braços da tropa.<br>O cerco desmorona — e as correntes de Volkarn cedem de qualquer forma.';
   pollVideoEnd(dragonBreakType.video, () => showGameOverOverlay(text));
 }
 
