@@ -323,9 +323,14 @@ const archerWalkPool = makeLoopPool('arqueiro_andando.mp4', 425, 0, 452, 706, 13
 const soldierAtkPool = makeLoopPool('soldado_atacando.mp4', 0,0,1280,720, 115, 4);
 const grakhRunPool = makeLoopPool('grakh_correndo.mp4', 0,0,945,720, 100, 4);
 const grakhAtkPool = makeLoopPool('grakh_atacando.mp4', 0,0,1091,720, 100, 4);
-// esse video especifico ficava com franja verde residual -- threshold mais
-// agressivo so nele, sem arriscar mudar os outros que ja estao bons.
-grakhAtkPool.forEach(t => { t.highT = 26; t.lowT = 15; });
+// os dois videos do Grakh tem sombra no fundo verde (provavelmente do proprio
+// personagem no chao), que o metodo antigo (baseado em brilho) nao reconhecia
+// bem -- a sombra escurece o verde e o "diff" cai, deixando um resto visivel.
+// Chroma key por matiz (HSV) resolve, porque a sombra muda o brilho mas quase
+// nao muda o matiz.
+const GRAKH_HUE_MODE = { hueLo: 85, hueHi: 175, satMin: 30 };
+grakhRunPool.forEach(t => { t.hueMode = GRAKH_HUE_MODE; });
+grakhAtkPool.forEach(t => { t.hueMode = GRAKH_HUE_MODE; });
 const bryneType   = makeLoopPool('bryne_idle.mp4',    504, 32, 282, 676, 100, 1)[0];
 const bryneWalkType = makeLoopPool('bryne_andando.mp4', 139,135,520,1086, 90, 1)[0];
 
@@ -447,7 +452,38 @@ const DRAGON_ANCHOR = { x: 1698, y: 430 };
 const DRAGON_W_ON_SCREEN = 450;
 let dragonAwake = false;
 
-function chromaKeyImageData(d, highT, lowT){
+function chromaKeyImageData(d, highT, lowT, hueMode){
+  if (hueMode){
+    // baseado em matiz (HSV) em vez de brilho -- muito mais robusto a sombras
+    // no fundo verde, que o metodo antigo (baseado em diferenca de canais)
+    // classificava mal (a sombra escurece o verde e derruba o "diff").
+    const hueLo = hueMode.hueLo || 95;
+    const hueHi = hueMode.hueHi || 165;
+    const satMin = hueMode.satMin || 55;
+    for (let i=0; i<d.length; i+=4){
+      const r = d[i], g = d[i+1], b = d[i+2];
+      const rf = r/255, gf = g/255, bf = b/255;
+      const max = Math.max(rf,gf,bf), min = Math.min(rf,gf,bf);
+      const delta = max - min;
+      let hue = 0;
+      if (delta > 0.0001){
+        if (max === rf) hue = ((gf-bf)/delta) % 6;
+        else if (max === gf) hue = (bf-rf)/delta + 2;
+        else hue = (rf-gf)/delta + 4;
+        hue *= 60;
+        if (hue < 0) hue += 360;
+      }
+      const sat = max === 0 ? 0 : (delta/max) * 255;
+      const isGreen = (hue >= hueLo && hue <= hueHi) && (sat >= satMin);
+      const a = isGreen ? 0 : 255;
+      d[i+3] = a;
+      if (a < 250){
+        const maxRB = Math.max(r,b);
+        if (g > maxRB) d[i+1] = maxRB;
+      }
+    }
+    return;
+  }
   highT = highT || 36;
   lowT = lowT || 12;
   for (let i=0; i<d.length; i+=4){
@@ -471,7 +507,7 @@ function keyType(t){
   if (t.video.readyState < 2) return false;
   t.ctx.drawImage(t.video, t.sx, t.sy, t.sw, t.sh, 0, 0, t.procW, t.procH);
   const frame = t.ctx.getImageData(0,0,t.procW,t.procH);
-  chromaKeyImageData(frame.data, t.highT, t.lowT);
+  chromaKeyImageData(frame.data, t.highT, t.lowT, t.hueMode);
   t.ctx.putImageData(frame,0,0);
   return true;
 }
@@ -956,7 +992,7 @@ function renderStatic(){
   for (const g of grakhUnits){ stamp(g.currentItem, g.x, g.y, GRAKH_H, g.flip); }
   if (bryneWalking){
     keyType(bryneWalkType);
-    stamp(bryneWalkType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, bryneWalkTarget.x > BRYNE_POS.x);
+    stamp(bryneWalkType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, bryneWalkTarget.x < BRYNE_POS.x);
   } else {
     stamp(bryneType, BRYNE_POS.x, BRYNE_POS.y, BRYNE_POS.h, true);
   }
