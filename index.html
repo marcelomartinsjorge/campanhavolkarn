@@ -173,6 +173,7 @@
   <video id="povVideoMiss2" src="miss2.mp4" playsinline preload="auto"></video>
   <video id="povVideoHit3" src="hit3.mp4" playsinline preload="auto"></video>
   <video id="povVideoMiss3" src="miss3.mp4" playsinline preload="auto"></video>
+  <audio id="bgMusic" src="musica.mp3" loop preload="auto"></audio>
   <div id="gameOverOverlay">
     <div id="gameOverText">O Volkarn acordou<br>e dizimou o exército.</div>
     <button id="retryBtn">Tentar de novo</button>
@@ -242,6 +243,8 @@ const bg = new Image();
 bg.src = 'cena.png';
 
 const povVideoHit = document.getElementById('povVideoHit');
+const bgMusic = document.getElementById('bgMusic');
+bgMusic.volume = 0.45;
 const povVideoMiss = document.getElementById('povVideoMiss');
 const povVideoHit2 = document.getElementById('povVideoHit2');
 const povVideoMiss2 = document.getElementById('povVideoMiss2');
@@ -876,6 +879,13 @@ function renderStatic(){
 }
 
 let __lastFrameT = performance.now();
+function updateMusic(){
+  const noCompetingAudio = (state === 'aim' || state === 'charging' || state === 'result' || state === 'phase_complete');
+  const shouldPlay = !cutsceneActive && noCompetingAudio;
+  if (shouldPlay && bgMusic.paused){ bgMusic.play().catch(() => {}); }
+  else if (!shouldPlay && !bgMusic.paused){ bgMusic.pause(); }
+}
+
 function loop(){
   const now = performance.now();
   const dt = Math.min(0.1, (now - __lastFrameT)/1000);
@@ -884,6 +894,7 @@ function loop(){
   updatePhase2Target(now);
   updateGrakh(now, dt);
   updateCharge();
+  updateMusic();
 
   if (state==='aim' || state==='charging' || state==='result' || state==='gameover' || state==='phase_complete'){
     renderStatic();
@@ -1058,6 +1069,8 @@ document.getElementById('introBtn').addEventListener('click', () => {
   el.style.opacity = '0';
   setTimeout(() => { el.style.display = 'none'; }, 500);
   showBryneSpeech();
+  cutsceneActive = false;
+  bgMusic.play().catch(() => {});
 });
 
 function showBryneSpeech(){
@@ -1243,6 +1256,7 @@ window.addEventListener('touchend', releaseCharge);
 
 // ---------- Cutscene inicial (so na primeira partida da sessao) ----------
 let cutscenePlayed = false;
+let cutsceneActive = true; // fica true durante cutscene + tutorial; vira false quando o jogo comeca de verdade
 
 function showIntroOverlay(){
   document.getElementById('introOverlay').style.display = 'flex';
